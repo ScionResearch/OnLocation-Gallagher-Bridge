@@ -1,0 +1,462 @@
+@page
+@model MappingModel
+@{
+    ViewData["Title"] = "Field Mapping";
+}
+
+<h3>Field Mapping</h3>
+<div class="form-check form-switch mb-3">
+    <input class="form-check-input" type="checkbox" role="switch" id="showAllSourceFields" />
+    <label class="form-check-label" for="showAllSourceFields">Show all OnLocation fields</label>
+</div>
+
+@if (Model.Message != null)
+{
+    <div class="alert alert-info">@Model.Message</div>
+}
+
+<form method="post">
+    <div class="mb-3">
+        <label class="form-label">Sync Profile</label>
+        <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
+    </div>
+    <input type="hidden" asp-for="LoadRequestId" id="loadRequestId" />
+    <button type="submit" class="btn btn-secondary" formaction="/Mapping?handler=Load" id="loadFieldsButton">Get OnLocation &amp; Gallagher Fields</button>
+    <button type="submit" class="btn btn-primary" formaction="/Mapping?handler=Save" id="saveMappingButton">Save mapping</button>
+    <div id="loadFieldsProgress" class="card border-primary mt-3 d-none" role="status" aria-live="polite">
+        <div class="card-body py-3">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <div id="loadFieldsSpinner" class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
+                <span id="loadFieldsComplete" class="badge rounded-pill text-bg-success d-none" aria-hidden="true">✓</span>
+                <strong id="loadFieldsStatus">Requesting OnLocation and Gallagher field data…</strong>
+            </div>
+            <div class="progress mb-3" aria-label="Loading fields">
+                <div id="loadFieldsProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" style="width: 0%"></div>
+            </div>
+            <ul class="list-unstyled mb-2 small">
+                <li data-load-step="1"><span class="badge text-bg-secondary me-2">1</span>OnLocation profile records</li>
+                <li data-load-step="2"><span class="badge text-bg-secondary me-2">2</span>OnLocation inductions and holder records</li>
+                <li data-load-step="3"><span class="badge text-bg-secondary me-2">3</span>Gallagher cardholder fields, divisions and access groups</li>
+            </ul>
+            <div class="small text-muted">This can take a little while. Keep this page open while the field data is retrieved.</div>
+        </div>
+    </div>
+
+<h4 class="mt-4">Defaults for new cardholders</h4>
+<p>Applied only when the bridge creates a cardholder. Existing cardholders keep the division and access groups they already have.</p>
+<div class="row">
+    <div class="col-md-6 mb-3">
+        <label class="form-label" asp-for="DefaultDivisionHref">Division <span class="text-danger">*</span></label>
+        <select class="form-select" asp-for="DefaultDivisionHref">
+            <option value="">-- none selected --</option>
+            @if (!Model.DefaultDivisionIsListed)
+            {
+                <option value="@Model.DefaultDivisionHref">@Model.DefaultDivisionHref</option>
+            }
+            @foreach (var division in Model.DivisionOptions)
+            {
+                <option value="@division.Href">@division.Name</option>
+            }
+        </select>
+        <div class="form-text">Command Centre rejects a cardholder without a division, so this must be set before any cardholder can be created.</div>
+    </div>
+    <div class="col-md-6 mb-3">
+        <label class="form-label" asp-for="DefaultAccessGroupHrefs">Access groups</label>
+        <select class="form-select" multiple size="8" asp-for="DefaultAccessGroupHrefs">
+            @foreach (var group in Model.SelectedAccessGroupsNotListed())
+            {
+                <option value="@group.Href">@group.Name</option>
+            }
+            @foreach (var group in Model.AccessGroupOptions)
+            {
+                <option value="@group.Href">@group.Name</option>
+            }
+        </select>
+        <div class="form-text">Optional. Hold Ctrl (or Cmd) to select more than one, or none to leave new cardholders without access.</div>
+    </div>
+</div>
+@if (!Model.DivisionOptions.Any())
+{
+    <div class="alert alert-warning py-2 small">Divisions and access groups have not been retrieved yet. Click <strong>Get OnLocation &amp; Gallagher Fields</strong> to populate these lists.</div>
+}
+
+@if (Model.SourceFields.Any() || Model.InductionFieldGroups.Any() || Model.GallagherFields.Any() || Model.GallagherPersonalDataFieldNames.Any() || Model.GallagherCompetencyNames.Any())
+{
+    <h4 class="mt-4">Available fields</h4>
+    <div class="row">
+        <div class="col-md-6">
+            <h5>OnLocation</h5>
+            @if (Model.SourceFields.Any())
+            {
+                <h6 class="text-muted">Profile record</h6>
+                <ul class="list-group mb-2" data-filterable-list>
+                    @foreach (var f in Model.SourceFields)
+                    {
+                        <li class="list-group-item py-1 d-flex justify-content-between" data-low-priority="@(!Model.IsPriorityProfileField(f))"><span>@f</span><small class="text-muted">@Model.ExampleFor(Model.SourceFieldExamples, f)</small></li>
+                    }
+                </ul>
+            }
+            @foreach (var induction in Model.InductionFieldGroups)
+            {
+                <h6 class="text-muted">@induction.Name (ID @induction.Id)</h6>
+                <ul class="list-group mb-3" data-filterable-list>
+                    @foreach (var f in induction.Fields)
+                    {
+                        <li class="list-group-item py-1 d-flex justify-content-between" data-low-priority="@(!Model.IsPriorityInductionField(f))"><span>@f</span><small class="text-muted">@Model.ExampleFor(induction.Examples, f)</small></li>
+                    }
+                </ul>
+            }
+        </div>
+        <div class="col-md-6">
+            <h5>Gallagher</h5>
+            @if (Model.GallagherFields.Any())
+            {
+                <h6 class="text-muted">Cardholder</h6>
+                <ul class="list-group mb-2">
+                    @foreach (var f in Model.GallagherFields)
+                    {
+                        <li class="list-group-item py-1 d-flex justify-content-between"><span>@f</span><small class="text-muted">@Model.ExampleFor(Model.GallagherFieldExamples, f)</small></li>
+                    }
+                </ul>
+            }
+            @if (Model.GallagherPersonalDataFieldNames.Any())
+            {
+                <h6 class="text-muted">Personal Data Fields</h6>
+                <ul class="list-group mb-2">
+                    @foreach (var f in Model.GallagherPersonalDataFieldNames)
+                    {
+                        <li class="list-group-item py-1 d-flex justify-content-between"><span>@f</span><small class="text-muted">@Model.ExampleFor(Model.GallagherPersonalDataFieldExamples, f)</small></li>
+                    }
+                </ul>
+            }
+            @if (Model.GallagherCompetencyNames.Any())
+            {
+                <h6 class="text-muted">Competencies</h6>
+                <ul class="list-group mb-3">
+                    @foreach (var name in Model.GallagherCompetencyNames)
+                    {
+                        <li class="list-group-item py-1 fw-bold">@name</li>
+                        <li class="list-group-item py-1 ps-4 d-flex justify-content-between"><small>@($"competencies.{name}.status")</small><small class="text-muted">@Model.ExampleFor(Model.GallagherCompetencyFieldExamples, $"competencies.{name}.status")</small></li>
+                        <li class="list-group-item py-1 ps-4 d-flex justify-content-between"><small>@($"competencies.{name}.expires")</small><small class="text-muted">@Model.ExampleFor(Model.GallagherCompetencyFieldExamples, $"competencies.{name}.expires")</small></li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+
+    @if (Model.SourceSample != null || Model.InductionSample != null || Model.GallagherSample != null)
+    {
+        <details>
+            <summary>Raw sample data</summary>
+            <div class="row mt-2">
+                @if (Model.SourceSample != null)
+                {
+                    <div class="col-md-4">
+                        <h6>OnLocation sample</h6>
+                        <pre class="border p-2 bg-light"><code>@Model.SourceSample</code></pre>
+                    </div>
+                }
+                @if (Model.InductionSample != null)
+                {
+                    <div class="col-md-4">
+                        <h6>OnLocation induction sample</h6>
+                        <pre class="border p-2 bg-light"><code>@Model.InductionSample</code></pre>
+                    </div>
+                }
+                @if (Model.GallagherSample != null)
+                {
+                    <div class="col-md-4">
+                        <h6>Gallagher sample</h6>
+                        <pre class="border p-2 bg-light"><code>@Model.GallagherSample</code></pre>
+                    </div>
+                }
+            </div>
+        </details>
+    }
+}
+
+<h4 class="mt-4">Field maps</h4>
+<p>Map an OnLocation source field to a Gallagher target field.</p>
+<table class="table table-sm">
+    <thead><tr><th>OnLocation source field</th><th>Gallagher target field</th><th>Transform</th></tr></thead>
+    <tbody>
+        @for (int i = 0; i < Model.FieldMaps.Count; i++)
+        {
+            <tr>
+                <td>
+                    <select class="form-select" asp-for="FieldMaps[i].Source">
+                        <option value="">-- select --</option>
+                        @if (!string.IsNullOrWhiteSpace(Model.FieldMaps[i].Source))
+                        {
+                            <option value="@Model.FieldMaps[i].Source">@Model.FieldMaps[i].Source</option>
+                        }
+                        @if (Model.SourceFields.Any())
+                        {
+                            <optgroup label="Profile record">
+                                @foreach (var f in Model.SourceFields)
+                                {
+                                    <option value="@f" data-low-priority="@(!Model.IsPriorityProfileField(f))">@f</option>
+                                }
+                            </optgroup>
+                        }
+                        @foreach (var induction in Model.InductionFieldGroups)
+                        {
+                            <optgroup label="@($"{induction.Name} (ID {induction.Id})")">
+                                @foreach (var f in induction.Fields)
+                                {
+                                    <option value="@($"inductions.{induction.Id}.{f}")" data-low-priority="@(!Model.IsPriorityInductionField(f))">@($"{induction.Name} (ID {induction.Id}) · {f}")</option>
+                                }
+                            </optgroup>
+                        }
+                    </select>
+                </td>
+                <td>
+                    <select class="form-select" asp-for="FieldMaps[i].Target">
+                        <option value="">-- select --</option>
+                        @if (!string.IsNullOrWhiteSpace(Model.FieldMaps[i].Target))
+                        {
+                            <option value="@Model.FieldMaps[i].Target">@Model.FieldMaps[i].Target</option>
+                        }
+                        @if (Model.GallagherFields.Any())
+                        {
+                            <optgroup label="Cardholder">
+                                @foreach (var f in Model.GallagherFields)
+                                {
+                                    <option value="@f">@f</option>
+                                }
+                            </optgroup>
+                        }
+                        @if (Model.GallagherPersonalDataFieldNames.Any())
+                        {
+                            <optgroup label="Personal Data Fields">
+                                @foreach (var f in Model.GallagherPersonalDataFieldNames)
+                                {
+                                    <option value="@($"personalDataFields.{f}")">@f</option>
+                                }
+                            </optgroup>
+                        }
+                        @if (Model.GallagherCompetencyNames.Any())
+                        {
+                            @foreach (var name in Model.GallagherCompetencyNames)
+                            {
+                                <optgroup label="@name">
+                                    <option value="@($"competencies.{name}.status")">@($"{name} (status)")</option>
+                                    <option value="@($"competencies.{name}.expires")">@($"{name} (expiry)")</option>
+                                </optgroup>
+                            }
+                        }
+                    </select>
+                </td>
+                <td>
+                    <select class="form-select" asp-for="FieldMaps[i].Transform">
+                        <option value="copy">Copy value</option>
+                        <option value="first-name">First name (first word)</option>
+                        <option value="last-name">Last name (remaining words)</option>
+                        <option value="gallagher-expiry">Gallagher competency expiry (NZ end of day)</option>
+                    </select>
+                </td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+<h4 class="mt-4">Primary match</h4>
+<p>The first rule used to identify the same person across OnLocation and Gallagher. Select more than one field on either side to compare a combined value, for example OnLocation <code>name</code> against Gallagher <code>firstName</code> and <code>lastName</code>.</p>
+<table class="table table-sm">
+    <thead><tr><th>OnLocation fields</th><th>Gallagher fields</th><th>Match type</th></tr></thead>
+    <tbody>
+        <tr>
+            <td>
+                <select class="form-select" multiple size="6" asp-for="PrimaryMatch.SourceFieldList">
+                    @foreach (var value in Model.UnlistedSourceFields(Model.PrimaryMatch))
+                    {
+                        <option value="@value">@value</option>
+                    }
+                    <optgroup label="Profile record">
+                        @foreach (var field in Model.SourceFields)
+                        {
+                            <option value="@field" data-low-priority="@(!Model.IsPriorityProfileField(field))">@field</option>
+                        }
+                    </optgroup>
+                    @foreach (var induction in Model.InductionFieldGroups)
+                    {
+                        <optgroup label="@($"{induction.Name} (ID {induction.Id})")">
+                            @foreach (var field in induction.Fields)
+                            {
+                                <option value="@($"inductions.{induction.Id}.{field}")" data-low-priority="@(!Model.IsPriorityInductionField(field))">@($"{induction.Name} (ID {induction.Id}) · {field}")</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+            </td>
+            <td>
+                <select class="form-select" multiple size="6" asp-for="PrimaryMatch.TargetFieldList">
+                    @foreach (var value in Model.UnlistedTargetFields(Model.PrimaryMatch))
+                    {
+                        <option value="@value">@value</option>
+                    }
+                    <optgroup label="Cardholder">
+                        @foreach (var field in Model.GallagherFields)
+                        {
+                            <option value="@field">@field</option>
+                        }
+                    </optgroup>
+                    <optgroup label="Personal Data Fields">
+                        @foreach (var field in Model.GallagherPersonalDataFieldNames)
+                        {
+                            <option value="@($"personalDataFields.{field}")">@field</option>
+                        }
+                    </optgroup>
+                </select>
+            </td>
+            <td>
+                <select class="form-select" asp-for="PrimaryMatch.MatchType">
+                    <option value="exact">exact</option>
+                    <option value="fuzzy">fuzzy</option>
+                </select>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<h4 class="mt-4">Fallback match rules</h4>
+<p>When the primary match or existing ID mapping does not find a result, try these rules in priority order. Hold Ctrl (or Cmd) to select several fields on either side; multiple fields are joined with a space before comparing, so a single combined OnLocation field can be matched against separate Gallagher fields.</p>
+<table class="table table-sm">
+    <thead><tr><th>OnLocation fields</th><th>Gallagher fields</th><th>Match type</th><th>Priority</th></tr></thead>
+    <tbody>
+        @for (int i = 0; i < Model.MatchRules.Count; i++)
+        {
+            <tr>
+                <td>
+                    <select class="form-select" multiple size="6" asp-for="MatchRules[i].SourceFieldList">
+                    @foreach (var value in Model.UnlistedSourceFields(Model.MatchRules[i]))
+                    {
+                        <option value="@value">@value</option>
+                    }
+                    <optgroup label="Profile record">
+                        @foreach (var field in Model.SourceFields)
+                        {
+                            <option value="@field" data-low-priority="@(!Model.IsPriorityProfileField(field))">@field</option>
+                        }
+                    </optgroup>
+                    @foreach (var induction in Model.InductionFieldGroups)
+                    {
+                        <optgroup label="@($"{induction.Name} (ID {induction.Id})")">
+                            @foreach (var field in induction.Fields)
+                            {
+                                <option value="@($"inductions.{induction.Id}.{field}")" data-low-priority="@(!Model.IsPriorityInductionField(field))">@($"{induction.Name} (ID {induction.Id}) · {field}")</option>
+                            }
+                        </optgroup>
+                    }
+                </select>
+                </td>
+                <td>
+                    <select class="form-select" multiple size="6" asp-for="MatchRules[i].TargetFieldList">
+                    @foreach (var value in Model.UnlistedTargetFields(Model.MatchRules[i]))
+                    {
+                        <option value="@value">@value</option>
+                    }
+                    <optgroup label="Cardholder">
+                        @foreach (var field in Model.GallagherFields)
+                        {
+                            <option value="@field">@field</option>
+                        }
+                    </optgroup>
+                    <optgroup label="Personal Data Fields">
+                        @foreach (var field in Model.GallagherPersonalDataFieldNames)
+                        {
+                            <option value="@($"personalDataFields.{field}")">@field</option>
+                        }
+                    </optgroup>
+                </select>
+                </td>
+                <td>
+                    <select class="form-select" asp-for="MatchRules[i].MatchType">
+                        <option value="exact">exact</option>
+                        <option value="fuzzy">fuzzy</option>
+                    </select>
+                </td>
+                <td><input class="form-control" type="number" asp-for="MatchRules[i].Priority" /></td>
+            </tr>
+        }
+    </tbody>
+</table>
+
+</form>
+
+<script>
+    (() => {
+        const form = document.querySelector('form');
+        const loadButton = document.getElementById('loadFieldsButton');
+        const saveButton = document.getElementById('saveMappingButton');
+        const progress = document.getElementById('loadFieldsProgress');
+        const status = document.getElementById('loadFieldsStatus');
+        const requestId = document.getElementById('loadRequestId');
+        const progressBar = document.getElementById('loadFieldsProgressBar');
+        const spinner = document.getElementById('loadFieldsSpinner');
+        const complete = document.getElementById('loadFieldsComplete');
+        const setStage = loadStatus => {
+            const isComplete = loadStatus.step === 4;
+            spinner.classList.toggle('d-none', isComplete);
+            complete.classList.toggle('d-none', !isComplete);
+            complete.classList.toggle('text-bg-success', loadStatus.isSuccess !== false);
+            complete.classList.toggle('text-bg-danger', loadStatus.isSuccess === false);
+            complete.textContent = loadStatus.isSuccess === false ? '!' : '✓';
+            status.textContent = loadStatus.message;
+            progressBar.style.width = `${Math.min(loadStatus.step, 4) * 25}%`;
+            document.querySelectorAll('[data-load-step]').forEach(item => {
+                const step = Number(item.dataset.loadStep);
+                const badge = item.querySelector('.badge');
+                badge.classList.toggle('text-bg-success', step < loadStatus.step);
+                badge.classList.toggle('text-bg-primary', step === loadStatus.step);
+                badge.classList.toggle('text-bg-secondary', step > loadStatus.step);
+                badge.textContent = step < loadStatus.step ? '✓' : String(step);
+            });
+        };
+        form.addEventListener('submit', event => {
+            if (event.submitter !== loadButton) return;
+            event.preventDefault();
+            requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+            loadButton.disabled = true;
+            saveButton.disabled = true;
+            progress.classList.remove('d-none');
+            const pollStatus = async () => {
+                try {
+                    const response = await fetch(`/Mapping?handler=LoadStatus&requestId=${encodeURIComponent(requestId.value)}`);
+                    if (!response.ok) return;
+                    const loadStatus = await response.json();
+                    if (loadStatus) setStage(loadStatus);
+                } catch {
+                }
+            };
+            pollStatus();
+            window.setInterval(pollStatus, 750);
+            window.setTimeout(() => {
+                form.action = loadButton.formAction;
+                form.submit();
+            }, 50);
+        });
+
+        const toggle = document.getElementById('showAllSourceFields');
+        const updateVisibility = () => {
+            document.querySelectorAll('[data-low-priority="True"], [data-low-priority="true"]').forEach(element => {
+                const show = toggle.checked || element.selected;
+                if (element.tagName === 'OPTION') {
+                    element.hidden = !show;
+                    element.disabled = !show;
+                } else {
+                    element.classList.toggle('d-none', !show);
+                }
+            });
+            document.querySelectorAll('[data-filterable-list]').forEach(list => {
+                const rows = Array.from(list.querySelectorAll(':scope > li'));
+                const visibleRows = rows.filter(row => !row.classList.contains('d-none'));
+                rows.forEach(row => row.classList.remove('rounded-top', 'border-top', 'rounded-bottom', 'border-bottom'));
+                visibleRows[0]?.classList.add('rounded-top', 'border-top');
+                visibleRows.at(-1)?.classList.add('rounded-bottom', 'border-bottom');
+            });
+        };
+        toggle.addEventListener('change', updateVisibility);
+        updateVisibility();
+    })();
+</script>

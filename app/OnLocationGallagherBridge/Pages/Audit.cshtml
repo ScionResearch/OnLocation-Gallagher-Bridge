@@ -1,0 +1,35 @@
+@page
+@model AuditModel
+@{
+    ViewData["Title"] = "Audit Log";
+}
+
+<h3>Audit Log</h3>
+
+<table class="table table-sm table-striped">
+    <thead>
+        <tr>
+            <th>Time</th>
+            <th>Correlation</th>
+            <th>Profile</th>
+            <th>Source</th>
+            <th>Action</th>
+            <th>Href</th>
+            <th>Message</th>
+        </tr>
+    </thead>
+    <tbody>
+        @foreach (var a in Model.Events)
+        {
+            <tr>
+                <td>@a.Timestamp.ToLocalTime().ToString("g")</td>
+                <td><code>@a.CorrelationId.Substring(0, Math.Min(8, a.CorrelationId.Length))</code></td>
+                <td>@a.ProfileId</td>
+                <td>@a.SourceId</td>
+                <td>@a.Action</td>
+                <td>@(a.GallagherHref ?? "—")</td>
+                <td>@(a.Message ?? "—")</td>
+            </tr>
+        }
+    </tbody>
+</table>

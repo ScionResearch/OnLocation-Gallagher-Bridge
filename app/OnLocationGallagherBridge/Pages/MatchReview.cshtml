@@ -1,0 +1,302 @@
+@page
+@model MatchReviewModel
+@{
+    ViewData["Title"] = "Match Review";
+}
+
+<h3>Initial Record Match</h3>
+
+@if (Model.Message != null)
+{
+    <div class="alert alert-info">@Model.Message</div>
+}
+
+<form method="post">
+    <div class="mb-3">
+        <label class="form-label">Sync Profile</label>
+        <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
+    </div>
+    <div class="mb-3">
+        <button type="submit" class="btn btn-outline-secondary btn-sm" formaction="/MatchReview?handler=LoadInductions">Load inductions for this profile</button>
+    </div>
+
+    @if (Model.InductionOptions.Any())
+    {
+        <div class="card mb-3">
+            <div class="card-body">
+                <h6 class="card-title">Inductions to pull through</h6>
+                <p class="small text-muted">Only ticked inductions are scanned, for the initial match and for ongoing sync. Each unticked induction saves a full holder scan.</p>
+                @foreach (var induction in Model.InductionOptions)
+                {
+                    <input type="hidden" name="OfferedInductionIds" value="@induction.Id" />
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" name="SelectedInductionIds" value="@induction.Id"
+                               id="induction-@induction.Id" checked="@induction.Selected" />
+                        <label class="form-check-label" for="induction-@induction.Id">
+                            @induction.Name
+                            <span class="text-muted small">(id @induction.Id@(induction.HolderCount.HasValue ? $", {induction.HolderCount} holders" : ""))</span>
+                        </label>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="mb-3">
+        <label class="form-label" asp-for="CompletedSinceDays">Include induction records completed within the last</label>
+        <div class="input-group" style="max-width: 16rem">
+            <input class="form-control" type="number" min="1" asp-for="CompletedSinceDays" />
+            <span class="input-group-text">days</span>
+        </div>
+    </div>
+    <div class="mb-3" style="max-width: 24rem">
+        <label class="form-label" asp-for="GlobalResolution">Default resolution for records without an automatic match</label>
+        <select class="form-select" asp-for="GlobalResolution">
+            <option value="">-- choose per record --</option>
+            <option value="Create">Create new</option>
+            <option value="Exclude">Exclude from sync</option>
+        </select>
+    </div>
+    <input type="hidden" asp-for="PreviewRequestId" id="previewRequestId" />
+    <button type="submit" class="btn btn-secondary" formaction="/MatchReview?handler=Preview" id="buildPreviewButton">Build initial match review</button>
+
+    <div class="card mt-3 d-none" id="previewProgress">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-2">
+                <div class="spinner-border spinner-border-sm" role="status" id="previewSpinner"></div>
+                <span id="previewComplete" class="badge rounded-pill d-none"></span>
+                <strong id="previewStatus">Preparing initial match review</strong>
+            </div>
+            <div class="progress mt-3" role="progressbar"><div class="progress-bar" id="previewProgressBar" style="width: 0%"></div></div>
+            <ol class="list-group list-group-numbered list-group-flush mt-3">
+                <li class="list-group-item" data-preview-step="1"><span class="badge text-bg-secondary rounded-pill me-2">1</span> Check connections</li>
+                <li class="list-group-item" data-preview-step="2"><span class="badge text-bg-secondary rounded-pill me-2">2</span> Retrieve OnLocation records and inductions</li>
+                <li class="list-group-item" data-preview-step="3"><span class="badge text-bg-secondary rounded-pill me-2">3</span> Retrieve Gallagher cardholders and calculate matches</li>
+                <li class="list-group-item" data-preview-step="4"><span class="badge text-bg-secondary rounded-pill me-2">4</span> Prepare review</li>
+            </ol>
+        </div>
+    </div>
+
+@if (Model.Totals is not null)
+{
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="card-title">Totals</h5>
+            <div class="row row-cols-2 row-cols-md-4 g-3 text-center">
+                <div class="col">
+                    <div class="fs-4 fw-semibold">@Model.Totals.OnLocationRecords</div>
+                    <div class="small text-muted">OnLocation records in window</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold">@Model.Totals.GallagherCardholders</div>
+                    <div class="small text-muted">Gallagher cardholders</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold">@Model.Totals.Reviewable</div>
+                    <div class="small text-muted">Records to review</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold">@Model.Totals.SkippedNoName</div>
+                    <div class="small text-muted">Skipped (no usable name)</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold text-success">@Model.Totals.AutoMatched</div>
+                    <div class="small text-muted">Automatically matched</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold text-info">@Model.Totals.NeedsConfirmation</div>
+                    <div class="small text-muted">Suggested, needs confirmation</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold text-warning">@Model.Totals.NoMatch</div>
+                    <div class="small text-muted">No match found</div>
+                </div>
+                <div class="col">
+                    <div class="fs-4 fw-semibold">@Model.Totals.Unresolved</div>
+                    <div class="small text-muted">Still unresolved</div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@if (Model.Rows.Any())
+{
+    <h4 class="mt-4">Review and confirm</h4>
+    <p>Resolve every OnLocation record before confirming. Unmatched and review-required records are shown first.</p>
+    <div class="alert alert-light border d-flex align-items-end gap-3">
+        <div>
+            <label class="form-label" for="applyGlobalResolution">Apply default to unresolved records</label>
+            <select class="form-select" id="applyGlobalResolution">
+                <option value="">-- select --</option>
+                <option value="Create">Create new</option>
+                <option value="Exclude">Exclude from sync</option>
+            </select>
+        </div>
+        <button class="btn btn-outline-secondary" type="button" id="applyGlobalResolutionButton">Apply</button>
+    </div>
+    <table class="table table-sm table-striped">
+        <thead>
+            <tr>
+                <th>OnLocation record</th>
+                <th>Resolution</th>
+                <th>Gallagher cardholder</th>
+                <th>Confidence</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var i in Enumerable.Range(0, Model.Rows.Count).OrderBy(i => Model.Rows[i].CandidateHref is not null && !Model.Rows[i].RequiresReview ? 1 : 0))
+            {
+                <tr class="@(Model.Rows[i].CandidateHref is null ? "table-warning" : Model.Rows[i].RequiresReview ? "table-info" : "")">
+                    <td>
+                        <strong>@Model.Rows[i].SourceDisplay</strong>
+                        <details class="mt-2">
+                            <summary class="text-primary">View record properties (@Model.Rows[i].SourceProperties.Count)</summary>
+                            <dl class="row small mt-2 mb-0">
+                                @foreach (var property in Model.Rows[i].SourceProperties)
+                                {
+                                    <dt class="col-sm-5 text-break">@property.Name</dt>
+                                    <dd class="col-sm-7 text-break">@property.Value</dd>
+                                }
+                            </dl>
+                        </details>
+                        <input type="hidden" asp-for="Rows[i].SourceId" />
+                        <input type="hidden" asp-for="Rows[i].SourceDisplay" />
+                        <input type="hidden" asp-for="Rows[i].SourceJson" />
+                        <input type="hidden" asp-for="Rows[i].Confidence" />
+                        <input type="hidden" asp-for="Rows[i].CandidateId" />
+                        <input type="hidden" asp-for="Rows[i].CandidateDisplay" />
+                        <input type="hidden" asp-for="Rows[i].RequiresReview" />
+                    </td>
+                    <td>
+                        <select class="form-select" asp-for="Rows[i].Resolution">
+                            <option value="">-- resolve --</option>
+                            <option value="Match">Match existing</option>
+                            <option value="Create">Create new</option>
+                            <option value="Exclude">Exclude from sync</option>
+                        </select>
+                    </td>
+                    <td>
+                        @if (!string.IsNullOrWhiteSpace(Model.Rows[i].CandidateHref) && !Model.Rows[i].RequiresReview)
+                        {
+                            <input type="hidden" asp-for="Rows[i].CandidateHref" />
+                            <small class="text-muted">Automatically matched: @Model.Rows[i].CandidateDisplay</small>
+                        }
+                        else
+                        {
+                            <select class="form-select" asp-for="Rows[i].CandidateHref" data-candidate-select="1">
+                                <option value="">-- select unmatched Gallagher cardholder --</option>
+                                @if (!string.IsNullOrWhiteSpace(Model.Rows[i].CandidateHref))
+                                {
+                                    <option value="@Model.Rows[i].CandidateHref">@Model.Rows[i].CandidateDisplay</option>
+                                }
+                            </select>
+                            @if (Model.Rows[i].RequiresReview)
+                            {
+                                <small class="text-muted">Suggested: @Model.Rows[i].CandidateDisplay. Confirm or choose another cardholder.</small>
+                            }
+                            else
+                            {
+                                <small class="text-muted">Only cardholders not automatically matched to another record are available.</small>
+                            }
+                        }
+                    </td>
+                    <td>@Model.Rows[i].Confidence</td>
+                    <td>@Model.Rows[i].Reason</td>
+                </tr>
+            }
+        </tbody>
+    </table>
+    <button type="submit" class="btn btn-primary" formaction="/MatchReview?handler=Approve">Confirm initial match and enable sync</button>
+    <template id="candidateOptions">@foreach (var option in Model.CandidateOptions){<option value="@option.Value">@option.Text</option>}</template>
+}
+</form>
+
+@section Scripts
+{
+    <script>
+        (() => {
+            const form = document.querySelector('form');
+            const buildButton = document.getElementById('buildPreviewButton');
+            const requestId = document.getElementById('previewRequestId');
+            const progress = document.getElementById('previewProgress');
+            const status = document.getElementById('previewStatus');
+            const progressBar = document.getElementById('previewProgressBar');
+            const spinner = document.getElementById('previewSpinner');
+            const complete = document.getElementById('previewComplete');
+            let pollTimer;
+
+            const setStage = previewStatus => {
+                const isComplete = previewStatus.step === 4;
+                spinner.classList.toggle('d-none', isComplete);
+                complete.classList.toggle('d-none', !isComplete);
+                complete.classList.toggle('text-bg-success', previewStatus.isSuccess !== false);
+                complete.classList.toggle('text-bg-danger', previewStatus.isSuccess === false);
+                complete.textContent = previewStatus.isSuccess === false ? '!' : '✓';
+                status.textContent = previewStatus.message;
+                progressBar.style.width = `${Math.min(previewStatus.step, 4) * 25}%`;
+                document.querySelectorAll('[data-preview-step]').forEach(item => {
+                    const step = Number(item.dataset.previewStep);
+                    const badge = item.querySelector('.badge');
+                    badge.classList.toggle('text-bg-success', step < previewStatus.step);
+                    badge.classList.toggle('text-bg-primary', step === previewStatus.step);
+                    badge.classList.toggle('text-bg-secondary', step > previewStatus.step);
+                    badge.textContent = step < previewStatus.step ? '✓' : String(step);
+                });
+                if (isComplete) window.clearInterval(pollTimer);
+            };
+
+            form.addEventListener('submit', event => {
+                if (event.submitter !== buildButton) return;
+                event.preventDefault();
+                requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+                buildButton.disabled = true;
+                progress.classList.remove('d-none');
+                const pollStatus = async () => {
+                    try {
+                        const response = await fetch(`/MatchReview?handler=PreviewStatus&requestId=${encodeURIComponent(requestId.value)}`);
+                        if (response.ok) {
+                            const previewStatus = await response.json();
+                            if (previewStatus) setStage(previewStatus);
+                        }
+                    } catch {
+                    }
+                };
+                pollStatus();
+                pollTimer = window.setInterval(pollStatus, 750);
+                window.setTimeout(() => {
+                    form.action = buildButton.formAction;
+                    form.submit();
+                }, 50);
+            });
+
+            const candidateOptions = document.getElementById('candidateOptions');
+            const fillCandidates = select => {
+                if (!candidateOptions || select.dataset.candidatesLoaded) return;
+                select.dataset.candidatesLoaded = '1';
+                const existing = new Set(Array.from(select.options, option => option.value));
+                const selected = select.value;
+                const fragment = document.createDocumentFragment();
+                candidateOptions.content.querySelectorAll('option').forEach(option => {
+                    if (!existing.has(option.value)) fragment.appendChild(option.cloneNode(true));
+                });
+                select.appendChild(fragment);
+                select.value = selected;
+            };
+            document.querySelectorAll('select[data-candidate-select]').forEach(select => {
+                select.addEventListener('mousedown', () => fillCandidates(select));
+                select.addEventListener('focus', () => fillCandidates(select));
+                select.addEventListener('keydown', () => fillCandidates(select));
+            });
+
+            document.getElementById('applyGlobalResolutionButton')?.addEventListener('click', () => {
+                const resolution = document.getElementById('applyGlobalResolution').value;
+                if (!resolution) return;
+                document.querySelectorAll('select[name$=".Resolution"]').forEach(select => {
+                    if (!select.value) select.value = resolution;
+                });
+            });
+        })();
+    </script>
+}

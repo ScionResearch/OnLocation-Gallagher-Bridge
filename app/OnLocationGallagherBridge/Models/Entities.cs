@@ -1,0 +1,128 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace OnLocationGallagherBridge.Models;
+
+public class SyncProfile
+{
+    [Key]
+    public string Id { get; set; } = string.Empty;
+    public string EntityType { get; set; } = string.Empty; // Staff, SpMember, InductionHolder
+    public bool Enabled { get; set; } = true;
+    public int PollingIntervalMinutes { get; set; } = 60;
+    public string OnLocationEndpoint { get; set; } = string.Empty;
+    public string MatchRulesJson { get; set; } = "[]";
+    public string FieldMapJson { get; set; } = "[]";
+    // Induction ids the operator wants processed. Empty means every induction referenced by the field map.
+    public string SelectedInductionIdsJson { get; set; } = "[]";
+    // Gallagher requires a division on every cardholder, so new cardholders are created in this one.
+    public string DefaultDivisionHref { get; set; } = string.Empty;
+    public string DefaultDivisionName { get; set; } = string.Empty;
+    // Access groups new cardholders are added to. Serialised as [{"href":"...","name":"..."}].
+    public string DefaultAccessGroupsJson { get; set; } = "[]";
+    public bool AutoCreate { get; set; } = false;
+    public bool InitialMatchCompleted { get; set; } = false;
+    public DateTimeOffset? InitialMatchCompletedAt { get; set; }
+    public DateTimeOffset? LastRun { get; set; }
+    public DateTimeOffset? NextRun { get; set; }
+}
+
+public class EntityMapping
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ProfileId { get; set; } = string.Empty;
+    public string SourceType { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
+    public string GallagherHref { get; set; } = string.Empty;
+    public string? GallagherId { get; set; }
+    public double Confidence { get; set; }
+    public bool ManualOverride { get; set; } = false;
+    public bool Excluded { get; set; } = false;
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class SyncBookmark
+{
+    [Key]
+    public string ProfileId { get; set; } = string.Empty;
+    public string? LastModified { get; set; }
+    public string? Cursor { get; set; }
+    // Highest holder record id already retrieved per induction, as {"inductionId":"holderId"}. Holder records
+    // are only ever appended, so the next poll asks for id greater than this instead of rescanning.
+    public string InductionCursorsJson { get; set; } = "{}";
+    public DateTimeOffset LastRun { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class SyncJob
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ProfileId { get; set; } = string.Empty;
+    public string SourceType { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
+    public string PayloadJson { get; set; } = "{}";
+    public string Status { get; set; } = "Pending"; // Pending, Running, Failed, Complete, DeadLetter
+    public int RetryCount { get; set; }
+    public string? Error { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
+}
+
+public class AuditLog
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string CorrelationId { get; set; } = string.Empty;
+    public string ProfileId { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
+    public string Action { get; set; } = string.Empty; // Create, Update, NoChange, ManualReview, Failed, StaleLink, Excluded
+    public string? BeforeJson { get; set; }
+    public string? AfterJson { get; set; }
+    public string? GallagherHref { get; set; }
+    public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.UtcNow;
+    public string? Message { get; set; }
+    // Who the record is, so the log can be read without cross-referencing OnLocation ids.
+    public string? SourceDisplay { get; set; }
+    public string? Error { get; set; }
+    public string Outcome { get; set; } = "Success"; // Success, Failed, Pending
+    public int DurationMs { get; set; }
+}
+
+public class ManualMatchQueue
+{
+    [Key]
+    public Guid Id { get; set; } = Guid.NewGuid();
+    public string ProfileId { get; set; } = string.Empty;
+    public string SourceId { get; set; } = string.Empty;
+    public string SourceJson { get; set; } = "{}";
+    public string? CandidateHref { get; set; }
+    public double Confidence { get; set; }
+    public string Status { get; set; } = "Pending"; // Pending, Approved, Rejected
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class InductionCompetencyMap
+{
+    [Key]
+    public int Id { get; set; }
+    public string OnLocationInductionId { get; set; } = string.Empty;
+    public string GallagherCompetencyHref { get; set; } = string.Empty;
+    public string? MappedBy { get; set; }
+    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
+public class FieldMap
+{
+    [Key]
+    public int Id { get; set; }
+    public string ProfileId { get; set; } = string.Empty;
+    public string SourceField { get; set; } = string.Empty;
+    public string TargetField { get; set; } = string.Empty;
+    public string Transform { get; set; } = "copy";
+    public string? OptionsJson { get; set; }
+    public int SortOrder { get; set; }
+}

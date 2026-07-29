@@ -1,0 +1,91 @@
+@page
+@model SettingsModel
+@{
+    ViewData["Title"] = "Connector Settings";
+}
+
+<h3>Connector Settings</h3>
+
+@if (Model.Message != null)
+{
+    <div class="alert alert-info">@Model.Message</div>
+}
+
+<form method="post">
+    <h5>OnLocation</h5>
+    <div class="mb-3">
+        <label class="form-label">Base URL</label>
+        <input class="form-control" asp-for="Config.OnLocation.BaseUrl" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Auth Mode</label>
+        <select class="form-select" id="OnLocationAuthMode" asp-for="Config.OnLocation.AuthMode">
+            <option value="OAuth2">OAuth2</option>
+            <option value="ApiKey">APIKEY header (API key only)</option>
+            <option value="Basic">Basic (API key + password)</option>
+        </select>
+    </div>
+    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
+        <label class="form-label">OAuth Client Id</label>
+        <input class="form-control" asp-for="Config.OnLocation.ClientId" />
+    </div>
+    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
+        <label class="form-label" for="Config_OnLocation_ClientSecret">OAuth Client Secret</label>
+        <input class="form-control" type="password" id="Config_OnLocation_ClientSecret" name="Config.OnLocation.ClientSecret" value="@Model.Config.OnLocation.ClientSecret" />
+    </div>
+    <div class="mb-3 auth-field" data-auth-modes="ApiKey Basic">
+        <label class="form-label" for="Config_OnLocation_ApiKey">API Key / Basic username</label>
+        <input class="form-control" type="password" id="Config_OnLocation_ApiKey" name="Config.OnLocation.ApiKey" value="@Model.Config.OnLocation.ApiKey" />
+    </div>
+    <div class="mb-3 auth-field" data-auth-modes="Basic">
+        <label class="form-label" for="Config_OnLocation_Password">Password (Basic auth only; leave blank for API Key)</label>
+        <input class="form-control" type="password" id="Config_OnLocation_Password" name="Config.OnLocation.Password" value="@Model.Config.OnLocation.Password" />
+    </div>
+    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
+        <label class="form-label">Scope</label>
+        <input class="form-control" asp-for="Config.OnLocation.Scope" />
+    </div>
+
+    <h5 class="mt-4">Gallagher</h5>
+    <div class="mb-3">
+        <label class="form-label">Base URL (root, e.g. https://gallagher.local)</label>
+        <input class="form-control" asp-for="Config.Gallagher.BaseUrl" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label">Username</label>
+        <input class="form-control" asp-for="Config.Gallagher.Username" />
+    </div>
+    <div class="mb-3">
+        <label class="form-label" for="Config_Gallagher_ApiKey">API Key</label>
+        <input class="form-control" type="password" id="Config_Gallagher_ApiKey" name="Config.Gallagher.ApiKey" value="@Model.Config.Gallagher.ApiKey" />
+    </div>
+    <div class="mb-3 form-check">
+        <input class="form-check-input" type="checkbox" asp-for="Config.Gallagher.DisableTlsVerification" />
+        <label class="form-check-label" asp-for="Config.Gallagher.DisableTlsVerification">Disable TLS verification (pilot only)</label>
+    </div>
+
+    <h5 class="mt-4">Web Host</h5>
+    <div class="mb-3">
+        <label class="form-label">URLs</label>
+        <input class="form-control" asp-for="Config.WebHost.Urls" />
+    </div>
+
+    <button type="submit" class="btn btn-primary" formaction="?handler=Save">Save</button>
+    <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestOnLocation">Test OnLocation</button>
+    <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestGallagher">Test Gallagher</button>
+</form>
+
+@section Scripts
+{
+    <script>
+        function updateOnLocationFields() {
+            const mode = document.getElementById('OnLocationAuthMode').value;
+            document.querySelectorAll('.auth-field').forEach(el => {
+                const modes = el.getAttribute('data-auth-modes').split(' ');
+                el.style.display = modes.includes(mode) ? '' : 'none';
+            });
+        }
+        updateOnLocationFields();
+        document.getElementById('OnLocationAuthMode').addEventListener('change', updateOnLocationFields);
+    </script>
+}
