@@ -65,6 +65,15 @@ public class ConfigService
         lock (_lock) { _config = config; }
     }
 
+    // Testing from scratch needs the stored credentials gone, not just blanked in memory.
+    public void Delete()
+    {
+        if (File.Exists(_configFile)) File.Delete(_configFile);
+        lock (_lock) { _config = new BridgeConfig(); }
+    }
+
+    public string ConfigFilePath => _configFile;
+
     private static byte[] Protect(byte[] data)
     {
         return ProtectedData.Protect(data, null, DataProtectionScope.LocalMachine);

@@ -75,6 +75,32 @@
     <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestGallagher">Test Gallagher</button>
 </form>
 
+<div class="card border-danger mt-5">
+    <div class="card-body">
+        <h5 class="card-title text-danger">Reset for testing</h5>
+        <p class="card-text text-muted small">
+            These actions cannot be undone. They do not touch anything in Command Centre or OnLocation, only what
+            this bridge has stored. Cardholders already created remain in Command Centre.
+        </p>
+        <div class="d-flex flex-wrap gap-2">
+            <form method="post" asp-page-handler="ResetSyncData" onsubmit="return confirm('Delete all jobs, mappings, manual matches, bookmarks and audit history? Field mapping and credentials are kept.');">
+                <button type="submit" class="btn btn-outline-danger">Clear sync data and matches</button>
+            </form>
+            <form method="post" asp-page-handler="ResetProfiles" onsubmit="return confirm('Delete all sync data AND the field mapping, match rules, induction selection and creation defaults?');">
+                <button type="submit" class="btn btn-outline-danger">Clear sync data and field mapping</button>
+            </form>
+            <form method="post" asp-page-handler="ClearCredentials" onsubmit="return confirm('Delete the stored OnLocation and Command Centre credentials?');">
+                <button type="submit" class="btn btn-outline-danger">Clear connector credentials</button>
+            </form>
+        </div>
+        <p class="card-text text-muted small mt-3 mb-0">
+            For a completely clean slate, stop the service and delete
+            <code>%ProgramData%\OnLocation-Gallagher-Bridge\bridge.db</code> and
+            <code>@Model.ConfigFilePath</code>; both are recreated on the next start.
+        </p>
+    </div>
+</div>
+
 @section Scripts
 {
     <script>

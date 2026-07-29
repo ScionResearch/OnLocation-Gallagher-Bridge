@@ -10,6 +10,9 @@ public class SyncProfile
     public string EntityType { get; set; } = string.Empty; // Staff, SpMember, InductionHolder
     public bool Enabled { get; set; } = true;
     public int PollingIntervalMinutes { get; set; } = 60;
+    // How far back a poll looks for completed inductions. Bounds the very first scan, which would otherwise
+    // read the entire induction history, and keeps every later scan cheap.
+    public int SyncWindowDays { get; set; } = 7;
     public string OnLocationEndpoint { get; set; } = string.Empty;
     public string MatchRulesJson { get; set; } = "[]";
     public string FieldMapJson { get; set; } = "[]";

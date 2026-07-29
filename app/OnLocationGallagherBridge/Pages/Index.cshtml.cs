@@ -13,13 +13,15 @@ public class IndexModel : PageModel
     private readonly IOnLocationConnector _onLocation;
     private readonly IGallagherConnector _gallagher;
     private readonly IAuditService _audit;
+    private readonly ISyncActivity _activity;
 
-    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit)
+    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit, ISyncActivity activity)
     {
         _db = db;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _audit = audit;
+        _activity = activity;
     }
 
     public List<SyncProfile> Profiles { get; set; } = new();
@@ -30,6 +32,29 @@ public class IndexModel : PageModel
     public bool GallagherOk { get; set; }
     public IReadOnlyList<AuditLog> RecentAudit { get; set; } = Array.Empty<AuditLog>();
     public string? Message { get; set; }
+    public SyncActivitySnapshot Activity { get; set; } = new();
+
+    // Anything from once a minute to once a month, which is the range operators asked for. Stored as minutes on
+    // the profile so the sync engine needs no changes.
+    public static readonly (int Minutes, string Label)[] IntervalOptions =
+    {
+        (1, "Every minute"),
+        (5, "Every 5 minutes"),
+        (15, "Every 15 minutes"),
+        (30, "Every 30 minutes"),
+        (60, "Hourly"),
+        (240, "Every 4 hours"),
+        (720, "Every 12 hours"),
+        (1440, "Daily"),
+        (10080, "Weekly"),
+        (43200, "Monthly")
+    };
+
+    public static string DescribeInterval(int minutes)
+    {
+        var match = IntervalOptions.FirstOrDefault(o => o.Minutes == minutes);
+        return match.Label ?? $"Every {minutes} minute(s)";
+    }
 
     public async Task OnGetAsync(CancellationToken ct)
     {
@@ -40,7 +65,59 @@ public class IndexModel : PageModel
         OnLocationOk = await _onLocation.TestConnectionAsync(ct);
         GallagherOk = await _gallagher.TestConnectionAsync(ct);
         RecentAudit = await _audit.GetRecentAsync(20);
+        Activity = _activity.Snapshot;
         if (TempData["Message"] is string message) Message = message;
+    }
+
+    // Polled by the dashboard so the activity card updates without reloading the page.
+    public IActionResult OnGetActivity()
+    {
+        var snapshot = _activity.Snapshot;
+        return new JsonResult(new
+        {
+            running = snapshot.Running,
+            profileId = snapshot.ProfileId,
+            phase = snapshot.Phase,
+            detail = snapshot.Detail,
+            recordsChecked = snapshot.RecordsChecked,
+            recordsMatched = snapshot.RecordsMatched,
+            processed = snapshot.Processed,
+            total = snapshot.Total,
+            elapsed = snapshot.Elapsed,
+            lastRunSummary = snapshot.LastRunSummary,
+            lastRunFinishedAt = snapshot.LastRunFinishedAt?.ToLocalTime().ToString("g")
+        });
+    }
+
+    public async Task<IActionResult> OnPostScheduleAsync(string profileId, int minutes, int days, CancellationToken ct)
+    {
+        var profile = await _db.SyncProfiles.FindAsync(new object?[] { profileId }, cancellationToken: ct);
+        if (profile == null)
+        {
+            TempData["Message"] = $"Profile '{profileId}' was not found.";
+            return RedirectToPage();
+        }
+
+        if (minutes < 1 || minutes > 43200)
+        {
+            TempData["Message"] = "The sync interval must be between one minute and one month.";
+            return RedirectToPage();
+        }
+
+        if (days < 1 || days > 3650)
+        {
+            TempData["Message"] = "The sync window must be between 1 and 3650 days.";
+            return RedirectToPage();
+        }
+
+        profile.PollingIntervalMinutes = minutes;
+        profile.SyncWindowDays = days;
+        // A shorter interval should take effect now rather than after the old one expires.
+        if (profile.LastRun.HasValue) profile.NextRun = profile.LastRun.Value.AddMinutes(minutes);
+        await _db.SaveChangesAsync(ct);
+
+        TempData["Message"] = $"'{profileId}' now syncs {DescribeInterval(minutes).ToLowerInvariant()}, looking back {days} day(s).";
+        return RedirectToPage();
     }
 
     // The sync engine skips profiles that are not enabled, so without this the flag could only be changed by

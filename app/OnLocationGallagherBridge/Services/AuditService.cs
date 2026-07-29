@@ -61,10 +61,9 @@ public class AuditService : IAuditService
 
     public async Task<IReadOnlyList<AuditLog>> GetRecentAsync(int count = 50)
     {
-        return await _db.AuditLogs.AsNoTracking()
-            .OrderByDescending(a => a.Timestamp)
-            .Take(count)
-            .ToListAsync();
+        // SQLite cannot ORDER BY a DateTimeOffset, so the sort has to happen after materialising.
+        var rows = await _db.AuditLogs.AsNoTracking().ToListAsync();
+        return rows.OrderByDescending(a => a.Timestamp).Take(count).ToList();
     }
 
     public async Task<IReadOnlyList<AuditLog>> QueryAsync(string? profileId, string? action, string? outcome, string? search, int count = 200)
@@ -82,6 +81,7 @@ public class AuditService : IAuditService
                 || (a.Error != null && a.Error.Contains(term)));
         }
 
-        return await query.OrderByDescending(a => a.Timestamp).Take(count).ToListAsync();
+        var rows = await query.ToListAsync();
+        return rows.OrderByDescending(a => a.Timestamp).Take(count).ToList();
     }
 }

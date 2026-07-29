@@ -55,11 +55,11 @@ public class ExceptionsModel : PageModel
 
     private async Task LoadAsync(CancellationToken ct)
     {
-        var failed = await _db.SyncJobs.AsNoTracking()
+        // SQLite cannot ORDER BY a DateTimeOffset, so the sort has to happen after materialising.
+        var failedJobs = await _db.SyncJobs.AsNoTracking()
             .Where(j => j.Status == "Failed")
-            .OrderByDescending(j => j.UpdatedAt)
-            .Take(500)
             .ToListAsync(ct);
+        var failed = failedJobs.OrderByDescending(j => j.UpdatedAt).Take(500).ToList();
 
         var mappings = await _db.EntityMappings.AsNoTracking().ToListAsync(ct);
         var rows = new List<FailureRow>();

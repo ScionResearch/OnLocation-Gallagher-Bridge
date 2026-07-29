@@ -15,6 +15,7 @@ public class ManualSyncModel : PageModel
     private readonly BridgeDbContext _db;
     private readonly IOnLocationSourceService _source;
     private readonly IJobProcessor _processor;
+    private readonly ISyncActivity _activity;
 
     [BindProperty]
     public string? SelectedProfileId { get; set; }
@@ -23,11 +24,12 @@ public class ManualSyncModel : PageModel
     public List<SyncJob> RecentJobs { get; set; } = new();
     public string? Message { get; set; }
 
-    public ManualSyncModel(BridgeDbContext db, IOnLocationSourceService source, IJobProcessor processor)
+    public ManualSyncModel(BridgeDbContext db, IOnLocationSourceService source, IJobProcessor processor, ISyncActivity activity)
     {
         _db = db;
         _source = source;
         _processor = processor;
+        _activity = activity;
     }
 
     public async Task OnGetAsync(CancellationToken ct)
@@ -56,6 +58,7 @@ public class ManualSyncModel : PageModel
         bookmark ??= new SyncBookmark { ProfileId = profile.Id };
 
         Log.Information("Starting manual sync for profile {Profile} ({EntityType})", profile.Id, profile.EntityType);
+        _activity.Begin(profile.Id, "Manual sync starting");
 
         IReadOnlyList<JsonElement> records;
         try
@@ -65,6 +68,7 @@ public class ManualSyncModel : PageModel
         catch (Exception ex)
         {
             Log.Error(ex, "Manual sync fetch failed for profile {Profile}", profile.Id);
+            _activity.Complete($"{profile.Id}: manual sync fetch failed \u2014 {ex.Message}");
             Message = $"Fetch failed: {ex.Message}";
             return Page();
         }
@@ -91,11 +95,15 @@ public class ManualSyncModel : PageModel
         await _db.SaveChangesAsync(ct);
 
         var pending = await _db.SyncJobs.Where(j => j.ProfileId == profile.Id && (j.Status == "Pending" || j.Status == "ManualReview")).ToListAsync(ct);
+        var processed = 0;
         foreach (var job in pending)
         {
             job.Status = "Running";
             await _db.SaveChangesAsync(ct);
+            _activity.SetProgress(processed, pending.Count, $"Writing {job.SourceId} to Command Centre");
             await _processor.ProcessAsync(job, correlation, ct);
+            processed++;
+            _activity.SetProgress(processed, pending.Count);
         }
 
         if (isNewBookmark)
@@ -108,6 +116,7 @@ public class ManualSyncModel : PageModel
             ? "No records returned from OnLocation. The endpoint responded but the list was empty."
             : $"Fetched {records.Count} records; created {created} sync jobs.";
         Log.Information("Manual sync completed for profile {Profile}: {Message}", profile.Id, Message);
+        _activity.Complete($"{profile.Id}: manual sync checked {_activity.Snapshot.RecordsChecked} induction record(s), wrote {processed} cardholder update(s)");
         var jobs = await _db.SyncJobs.AsNoTracking().ToListAsync(ct);
         RecentJobs = jobs.OrderByDescending(j => j.UpdatedAt).Take(50).ToList();
         return Page();

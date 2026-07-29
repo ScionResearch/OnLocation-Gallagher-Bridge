@@ -5,30 +5,110 @@
 }
 
 <h3>Audit Log</h3>
+<p class="text-muted">Every record the bridge touched, what it did, and how Command Centre responded.</p>
 
-<table class="table table-sm table-striped">
+<form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-md-2">
+        <label class="form-label">Profile</label>
+        <select class="form-select" asp-for="ProfileId">
+            <option value="">All</option>
+            @foreach (var id in Model.ProfileIds)
+            {
+                <option value="@id">@id</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Action</label>
+        <select class="form-select" asp-for="Action">
+            <option value="">All</option>
+            @foreach (var action in Model.Actions)
+            {
+                <option value="@action">@action</option>
+            }
+        </select>
+    </div>
+    <div class="col-md-2">
+        <label class="form-label">Outcome</label>
+        <select class="form-select" asp-for="Outcome">
+            <option value="">All</option>
+            <option value="Success">Success</option>
+            <option value="Failed">Failed</option>
+            <option value="Pending">Pending</option>
+        </select>
+    </div>
+    <div class="col-md-4">
+        <label class="form-label">Search name, id, message or error</label>
+        <input class="form-control" asp-for="Search" placeholder="e.g. Smith, 51492, 404" />
+    </div>
+    <div class="col-md-2">
+        <button type="submit" class="btn btn-primary w-100">Filter</button>
+    </div>
+</form>
+
+<p class="text-muted">
+    Showing @Model.Events.Count event(s):
+    <span class="badge bg-success">@Model.SuccessCount success</span>
+    <span class="badge bg-danger">@Model.FailedCount failed</span>
+    <span class="badge bg-warning text-dark">@Model.PendingCount awaiting input</span>
+</p>
+
+<table class="table table-sm align-middle">
     <thead>
         <tr>
             <th>Time</th>
-            <th>Correlation</th>
+            <th>Record</th>
             <th>Profile</th>
-            <th>Source</th>
             <th>Action</th>
-            <th>Href</th>
-            <th>Message</th>
+            <th>Outcome</th>
+            <th>What happened</th>
+            <th>Took</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
         @foreach (var a in Model.Events)
         {
+            var detailId = $"audit-{a.Id:N}";
             <tr>
-                <td>@a.Timestamp.ToLocalTime().ToString("g")</td>
-                <td><code>@a.CorrelationId.Substring(0, Math.Min(8, a.CorrelationId.Length))</code></td>
+                <td class="text-nowrap">@a.Timestamp.ToLocalTime().ToString("g")</td>
+                <td>
+                    <strong>@(a.SourceDisplay ?? a.SourceId)</strong>
+                    <small class="d-block text-muted">id @a.SourceId</small>
+                </td>
                 <td>@a.ProfileId</td>
-                <td>@a.SourceId</td>
-                <td>@a.Action</td>
-                <td>@(a.GallagherHref ?? "—")</td>
-                <td>@(a.Message ?? "—")</td>
+                <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
+                <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
+                <td>
+                    @(a.Message ?? "—")
+                    @if (!string.IsNullOrWhiteSpace(a.Error))
+                    {
+                        <small class="d-block text-danger">@a.Error</small>
+                    }
+                </td>
+                <td class="text-nowrap">@a.DurationMs ms</td>
+                <td><button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#@detailId">Detail</button></td>
+            </tr>
+            <tr class="collapse" id="@detailId">
+                <td colspan="8">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <h6>Sent to Command Centre</h6>
+                            <pre class="bg-light p-2 small" style="max-height: 18rem; overflow: auto;">@AuditModel.Prettify(a.AfterJson)</pre>
+                        </div>
+                        <div class="col-md-6">
+                            <h6>Cardholder</h6>
+                            <p class="small"><code>@(a.GallagherHref ?? "not linked")</code></p>
+                            <h6>Correlation</h6>
+                            <p class="small"><code>@a.CorrelationId</code></p>
+                            @if (!string.IsNullOrWhiteSpace(a.Error))
+                            {
+                                <h6>Error</h6>
+                                <pre class="bg-light p-2 small text-danger">@a.Error</pre>
+                            }
+                        </div>
+                    </div>
+                </td>
             </tr>
         }
     </tbody>

@@ -9,11 +9,13 @@ public class SyncEngine : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<SyncEngine> _logger;
+    private readonly ISyncActivity _activity;
 
-    public SyncEngine(IServiceProvider services, ILogger<SyncEngine> logger)
+    public SyncEngine(IServiceProvider services, ILogger<SyncEngine> logger, ISyncActivity activity)
     {
         _services = services;
         _logger = logger;
+        _activity = activity;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -71,6 +73,7 @@ public class SyncEngine : BackgroundService
 
         var correlation = Guid.NewGuid().ToString("N");
         _logger.LogInformation("Running profile {Profile} with correlation {Correlation}", profile.Id, correlation);
+        _activity.Begin(profile.Id, "Starting");
 
         var bookmark = await db.SyncBookmarks.FindAsync(new object?[] { profile.Id }, cancellationToken: ct);
         var newBookmark = bookmark == null;
@@ -84,9 +87,11 @@ public class SyncEngine : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Profile {Profile} fetch failed", profile.Id);
+            _activity.Complete($"{profile.Id}: fetch failed \u2014 {ex.Message}");
             return;
         }
 
+        _activity.SetPhase("Queueing", $"{records.Count} record(s) to write to Command Centre");
         foreach (var record in records)
         {
             var id = GetId(record);
@@ -114,12 +119,16 @@ public class SyncEngine : BackgroundService
         await db.SaveChangesAsync(ct);
 
         var pending = await db.SyncJobs.Where(j => j.ProfileId == profile.Id && j.Status == "Pending").ToListAsync(ct);
+        var processed = 0;
         foreach (var job in pending)
         {
             job.Status = "Running";
             job.UpdatedAt = DateTimeOffset.UtcNow;
             await db.SaveChangesAsync(ct);
+            _activity.SetProgress(processed, pending.Count, $"Writing {job.SourceId} to Command Centre");
             await processor.ProcessAsync(job, correlation, ct);
+            processed++;
+            _activity.SetProgress(processed, pending.Count);
         }
 
         if (newBookmark)
@@ -127,6 +136,9 @@ public class SyncEngine : BackgroundService
         else
             db.SyncBookmarks.Update(bookmark);
         await db.SaveChangesAsync(ct);
+
+        var snapshot = _activity.Snapshot;
+        _activity.Complete($"{profile.Id}: checked {snapshot.RecordsChecked} induction record(s), wrote {processed} cardholder update(s)");
     }
 
     private async Task<IReadOnlyList<JsonElement>> FetchInductionHoldersAsync(IOnLocationConnector onLocation, SyncProfile profile, SyncBookmark bookmark, CancellationToken ct)

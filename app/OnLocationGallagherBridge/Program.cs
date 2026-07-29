@@ -46,6 +46,7 @@ builder.Services.AddDbContext<BridgeDbContext>(options =>
 
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
+builder.Services.AddSingleton<ISyncActivity, SyncActivityService>();
 builder.Services.AddSingleton<IOnLocationConnector, OnLocationConnector>();
 builder.Services.AddSingleton<IOnLocationSourceService, OnLocationSourceService>();
 builder.Services.AddSingleton<IGallagherConnector, GallagherConnector>();
@@ -108,6 +109,7 @@ static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
     await EnsureColumnAsync(db, "AuditLogs", "Outcome", "TEXT NOT NULL DEFAULT 'Success'");
     await EnsureColumnAsync(db, "AuditLogs", "DurationMs", "INTEGER NOT NULL DEFAULT 0");
     await EnsureColumnAsync(db, "SyncBookmarks", "InductionCursorsJson", "TEXT NOT NULL DEFAULT '{}'");
+    await EnsureColumnAsync(db, "SyncProfiles", "SyncWindowDays", "INTEGER NOT NULL DEFAULT 7");
 }
 
 static async Task EnsureColumnAsync(BridgeDbContext db, string tableName, string columnName, string columnDefinition)

@@ -15,29 +15,49 @@
 }
 
 <div class="row g-3">
-    <div class="col-md-4">
+    <div class="col-md-8">
         <div class="card">
             <div class="card-body">
                 <h5 class="card-title">Profiles</h5>
                 <ul class="list-group list-group-flush">
                     @foreach (var p in Model.Profiles)
                     {
-                        <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <span>
-                                @p.Id
-                                @if (!p.InitialMatchCompleted)
-                                {
-                                    <small class="d-block text-muted">Initial match not confirmed</small>
-                                }
-                            </span>
-                            <span class="d-flex align-items-center gap-2">
-                                <span class="badge bg-@(p.Enabled ? "success" : "secondary")">@(p.Enabled ? "on" : "off")</span>
+                        <li class="list-group-item">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <span>
+                                    <strong>@p.Id</strong>
+                                    <span class="badge bg-@(p.Enabled ? "success" : "secondary") ms-2">@(p.Enabled ? "on" : "off")</span>
+                                    @if (!p.InitialMatchCompleted)
+                                    {
+                                        <small class="d-block text-muted">Initial match not confirmed</small>
+                                    }
+                                </span>
                                 <form method="post" asp-page-handler="Toggle" class="d-inline">
                                     <input type="hidden" name="profileId" value="@p.Id" />
                                     <input type="hidden" name="enable" value="@((!p.Enabled).ToString().ToLowerInvariant())" />
                                     <button type="submit" class="btn btn-sm btn-outline-@(p.Enabled ? "secondary" : "primary")">@(p.Enabled ? "Turn off" : "Turn on")</button>
                                 </form>
-                            </span>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-end mt-2">
+                                <small class="text-muted">
+                                    Last run @(p.LastRun?.ToLocalTime().ToString("g") ?? "never")<br />
+                                    Next run @(p.Enabled ? (p.NextRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")
+                                </small>
+                                <form method="post" asp-page-handler="Schedule" class="d-flex gap-2 align-items-center">
+                                    <input type="hidden" name="profileId" value="@p.Id" />
+                                    <label class="form-label mb-0 small text-nowrap">Sync</label>
+                                    <select name="minutes" class="form-select form-select-sm">
+                                        @foreach (var option in IndexModel.IntervalOptions)
+                                        {
+                                            <option value="@option.Minutes" selected="@(option.Minutes == p.PollingIntervalMinutes)">@option.Label</option>
+                                        }
+                                    </select>
+                                    <label class="form-label mb-0 small text-nowrap">looking back</label>
+                                    <input type="number" name="days" min="1" max="3650" value="@p.SyncWindowDays" class="form-control form-control-sm" style="width: 5rem;" />
+                                    <span class="small text-nowrap">day(s)</span>
+                                    <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Apply</button>
+                                </form>
+                            </div>
                         </li>
                     }
                 </ul>
@@ -49,8 +69,20 @@
             <div class="card-body">
                 <h5 class="card-title">Queue</h5>
                 <p class="card-text">Pending: <strong>@Model.PendingJobs</strong></p>
-                <p class="card-text">Failed: <strong>@Model.FailedJobs</strong></p>
-                <p class="card-text">Manual matches: <strong>@Model.ManualMatches</strong></p>
+                <p class="card-text">
+                    Failed: <strong class="text-@(Model.FailedJobs > 0 ? "danger" : "body")">@Model.FailedJobs</strong>
+                    @if (Model.FailedJobs > 0)
+                    {
+                        <a asp-page="/Exceptions" class="ms-2">Review exceptions</a>
+                    }
+                </p>
+                <p class="card-text">
+                    Manual matches: <strong>@Model.ManualMatches</strong>
+                    @if (Model.ManualMatches > 0)
+                    {
+                        <a asp-page="/MatchReview" class="ms-2">Resolve</a>
+                    }
+                </p>
             </div>
         </div>
     </div>
@@ -65,21 +97,107 @@
     </div>
 </div>
 
-<h4 class="mt-4">Recent Audit Events</h4>
-<table class="table table-sm table-striped">
+<div class="card mt-4" id="activity-card">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+                Sync Activity
+                <span class="badge bg-secondary ms-2" id="activity-state">@(Model.Activity.Running ? "running" : "idle")</span>
+            </h5>
+            <small class="text-muted" id="activity-elapsed">@(Model.Activity.Running ? Model.Activity.Elapsed : "")</small>
+        </div>
+        <p class="mb-1 mt-2"><strong id="activity-phase">@Model.Activity.Phase</strong> <span id="activity-profile" class="text-muted">@(Model.Activity.ProfileId == null ? "" : $"({Model.Activity.ProfileId})")</span></p>
+        <p class="mb-2 text-muted small" id="activity-detail">@(Model.Activity.Detail ?? Model.Activity.LastRunSummary ?? "Waiting for the next scheduled run.")</p>
+        <div class="progress mb-2" style="height: 0.5rem;">
+            <div class="progress-bar" id="activity-bar" role="progressbar" style="width: @(Model.Activity.Total > 0 ? Model.Activity.Processed * 100 / Model.Activity.Total : 0)%"></div>
+        </div>
+        <div class="d-flex gap-3 small text-muted">
+            <span>Induction records checked: <strong id="activity-checked">@Model.Activity.RecordsChecked</strong></span>
+            <span>People affected: <strong id="activity-matched">@Model.Activity.RecordsMatched</strong></span>
+            <span>Written: <strong id="activity-processed">@Model.Activity.Processed</strong> of <span id="activity-total">@Model.Activity.Total</span></span>
+        </div>
+    </div>
+</div>
+
+<div class="d-flex justify-content-between align-items-center mt-4">
+    <h4 class="mb-0">Recent Activity</h4>
+    <a asp-page="/Audit">Full audit log</a>
+</div>
+<table class="table table-sm table-striped align-middle">
     <thead>
-        <tr><th>Time</th><th>Profile</th><th>Source</th><th>Action</th><th>Detail</th></tr>
+        <tr><th>Time</th><th>Record</th><th>Profile</th><th>Action</th><th>Outcome</th><th>What happened</th></tr>
     </thead>
     <tbody>
         @foreach (var a in Model.RecentAudit)
         {
             <tr>
-                <td>@a.Timestamp.ToLocalTime().ToString("g")</td>
+                <td class="text-nowrap">@a.Timestamp.ToLocalTime().ToString("g")</td>
+                <td>
+                    <strong>@(a.SourceDisplay ?? a.SourceId)</strong>
+                    <small class="d-block text-muted">id @a.SourceId</small>
+                </td>
                 <td>@a.ProfileId</td>
-                <td>@a.SourceId</td>
-                <td>@a.Action</td>
-                <td>@(a.Message ?? "—")</td>
+                <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
+                <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
+                <td>
+                    @(a.Message ?? "—")
+                    @if (!string.IsNullOrWhiteSpace(a.Error))
+                    {
+                        <small class="d-block text-danger">@a.Error</small>
+                    }
+                </td>
             </tr>
+        }
+        @if (!Model.RecentAudit.Any())
+        {
+            <tr><td colspan="6" class="text-muted">No records have been processed yet.</td></tr>
         }
     </tbody>
 </table>
+
+@section Scripts {
+    <script>
+        (function () {
+            var wasRunning = @(Model.Activity.Running ? "true" : "false");
+
+            function text(id, value) {
+                var el = document.getElementById(id);
+                if (el) el.textContent = value;
+            }
+
+            async function poll() {
+                try {
+                    var response = await fetch('?handler=Activity', { headers: { 'Accept': 'application/json' } });
+                    if (!response.ok) return;
+                    var a = await response.json();
+
+                    var state = document.getElementById('activity-state');
+                    state.textContent = a.running ? 'running' : 'idle';
+                    state.className = 'badge ms-2 ' + (a.running ? 'bg-primary' : 'bg-secondary');
+
+                    text('activity-phase', a.phase);
+                    text('activity-profile', a.profileId ? '(' + a.profileId + ')' : '');
+                    text('activity-detail', a.detail || a.lastRunSummary || 'Waiting for the next scheduled run.');
+                    text('activity-elapsed', a.running ? a.elapsed : (a.lastRunFinishedAt ? 'last run ' + a.lastRunFinishedAt : ''));
+                    text('activity-checked', a.recordsChecked);
+                    text('activity-matched', a.recordsMatched);
+                    text('activity-processed', a.processed);
+                    text('activity-total', a.total);
+
+                    var bar = document.getElementById('activity-bar');
+                    bar.style.width = (a.total > 0 ? Math.round(a.processed * 100 / a.total) : (a.running ? 100 : 0)) + '%';
+                    bar.className = 'progress-bar' + (a.running && a.total === 0 ? ' progress-bar-striped progress-bar-animated' : '');
+
+                    // The queue counts and audit table are rendered server-side, so refresh once a run ends.
+                    if (wasRunning && !a.running) { window.location.reload(); return; }
+                    wasRunning = a.running;
+                } catch (e) {
+                    // A failed poll is not worth surfacing; the next one will retry.
+                }
+            }
+
+            poll();
+            setInterval(poll, 2000);
+        })();
+    </script>
+}

@@ -1514,3 +1514,4 @@ D:\Software Development\Projects\OnLocation-Gallagher-Bridge\app\OnLocationGalla
 D:\Software Development\Projects\OnLocation-Gallagher-Bridge\app\OnLocationGallagherBridge\bin\Debug\net9.0\win-x64\mscorrc.dll
 D:\Software Development\Projects\OnLocation-Gallagher-Bridge\app\OnLocationGallagherBridge\bin\Debug\net9.0\win-x64\msquic.dll
 D:\Software Development\Projects\OnLocation-Gallagher-Bridge\app\OnLocationGallagherBridge\bin\Debug\net9.0\win-x64\aspnetcorev2_inprocess.dll
+D:\Software Development\Projects\OnLocation-Gallagher-Bridge\app\OnLocationGallagherBridge\obj\Debug\net9.0\win-x64\OnLocationGallagherBridge.sourcelink.json
