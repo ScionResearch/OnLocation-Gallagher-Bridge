@@ -65,7 +65,11 @@
             <div class="d-flex align-items-center gap-2">
                 <div class="spinner-border spinner-border-sm" role="status" id="previewSpinner"></div>
                 <span id="previewComplete" class="badge rounded-pill d-none"></span>
-                <strong id="previewStatus">Preparing initial match review</strong>
+                <div>
+                    <strong id="previewStatus">Preparing initial match review</strong>
+                    <div id="previewDetail" class="text-muted small"></div>
+                </div>
+                <span id="previewElapsed" class="text-muted small ms-auto"></span>
             </div>
             <div class="progress mt-3" role="progressbar"><div class="progress-bar" id="previewProgressBar" style="width: 0%"></div></div>
             <ol class="list-group list-group-numbered list-group-flush mt-3">
@@ -225,7 +229,28 @@
             const progressBar = document.getElementById('previewProgressBar');
             const spinner = document.getElementById('previewSpinner');
             const complete = document.getElementById('previewComplete');
+            const detail = document.getElementById('previewDetail');
+            const elapsed = document.getElementById('previewElapsed');
             let pollTimer;
+            let elapsedTimer;
+            let elapsedStart;
+
+            const formatElapsed = ms => {
+                const totalSeconds = Math.floor(ms / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+                return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            };
+
+            const updateElapsed = () => {
+                if (!elapsedStart) return;
+                elapsed.textContent = `Elapsed: ${formatElapsed(Date.now() - elapsedStart)}`;
+            };
+
+            const stopTimers = () => {
+                window.clearInterval(pollTimer);
+                window.clearInterval(elapsedTimer);
+            };
 
             const setStage = previewStatus => {
                 const isComplete = previewStatus.step === 4;
@@ -235,7 +260,11 @@
                 complete.classList.toggle('text-bg-danger', previewStatus.isSuccess === false);
                 complete.textContent = previewStatus.isSuccess === false ? '!' : '✓';
                 status.textContent = previewStatus.message;
-                progressBar.style.width = `${Math.min(previewStatus.step, 4) * 25}%`;
+                detail.textContent = previewStatus.detail || '';
+                const percent = typeof previewStatus.progressPercent === 'number'
+                    ? previewStatus.progressPercent
+                    : Math.min(previewStatus.step, 4) * 25;
+                progressBar.style.width = `${percent}%`;
                 document.querySelectorAll('[data-preview-step]').forEach(item => {
                     const step = Number(item.dataset.previewStep);
                     const badge = item.querySelector('.badge');
@@ -244,7 +273,7 @@
                     badge.classList.toggle('text-bg-secondary', step > previewStatus.step);
                     badge.textContent = step < previewStatus.step ? '✓' : String(step);
                 });
-                if (isComplete) window.clearInterval(pollTimer);
+                if (isComplete) stopTimers();
             };
 
             form.addEventListener('submit', event => {
@@ -253,6 +282,9 @@
                 requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
                 buildButton.disabled = true;
                 progress.classList.remove('d-none');
+                elapsedStart = Date.now();
+                updateElapsed();
+                elapsedTimer = window.setInterval(updateElapsed, 1000);
                 const pollStatus = async () => {
                     try {
                         const response = await fetch(`/MatchReview?handler=PreviewStatus&requestId=${encodeURIComponent(requestId.value)}`);

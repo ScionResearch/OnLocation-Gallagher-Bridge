@@ -7,8 +7,10 @@ namespace OnLocationGallagherBridge.Services;
 public interface IOnLocationSourceService
 {
     Task<IReadOnlyList<JsonElement>> GetRecordsAsync(SyncProfile profile, SyncBookmark bookmark, CancellationToken ct = default);
-    Task<IReadOnlyList<JsonElement>> GetInitialMatchRecordsAsync(SyncProfile profile, DateTimeOffset completedSince, CancellationToken ct = default);
+    Task<IReadOnlyList<JsonElement>> GetInitialMatchRecordsAsync(SyncProfile profile, DateTimeOffset completedSince, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default);
 }
+
+public record OnLocationFetchProgress(int Percent, string Message);
 
 public class OnLocationSourceService : IOnLocationSourceService
 {
@@ -122,7 +124,7 @@ public class OnLocationSourceService : IOnLocationSourceService
         }
     }
 
-    public async Task<IReadOnlyList<JsonElement>> GetInitialMatchRecordsAsync(SyncProfile profile, DateTimeOffset completedSince, CancellationToken ct = default)
+    public async Task<IReadOnlyList<JsonElement>> GetInitialMatchRecordsAsync(SyncProfile profile, DateTimeOffset completedSince, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default)
     {
         var endpoint = profile.EntityType switch
         {
@@ -135,8 +137,8 @@ public class OnLocationSourceService : IOnLocationSourceService
         var inductionIds = GetSelectedInductionIds(profile);
         if (inductionIds.Count == 0)
         {
-            _logger.Information("Initial match for {ProfileId}: no inductions selected, enumerating all {Endpoint} records", profile.Id, endpoint);
-            return await GetAllAsync(endpoint, ct);
+            ReportProgress(progress, 0, "No inductions selected; enumerating all records...");
+            return await GetAllAsync(endpoint, ct, progress, 0, 100);
         }
 
         _logger.Information("Initial match for {ProfileId}: scanning induction(s) {InductionIds} (mapped: {MappedIds}, selected: {SelectedIds})",
@@ -145,41 +147,61 @@ public class OnLocationSourceService : IOnLocationSourceService
             string.Join(", ", GetMappedInductionIds(profile.FieldMapJson).OrderBy(id => id)),
             string.Join(", ", GetInductionIdList(profile.SelectedInductionIdsJson).OrderBy(id => id)));
 
+        ReportProgress(progress, 0, $"Scanning {inductionIds.Count} induction(s) for completed records...");
+
         var personIdField = GetPersonIdField(profile);
         var attemptsByInduction = new Dictionary<string, Dictionary<string, JsonElement>>(StringComparer.OrdinalIgnoreCase);
+        var index = 0;
+        var perInductionRange = 40.0 / inductionIds.Count;
         foreach (var inductionId in inductionIds)
         {
-            var attempts = await _onLocation.GetInductionHoldersCompletedSinceAsync(inductionId, completedSince, ct);
+            var inductionIndex = index;
+            var inductionProgress = new Progress<OnLocationFetchProgress>(p =>
+            {
+                var overallPercent = (int)(inductionIndex * perInductionRange + p.Percent / 100.0 * perInductionRange);
+                ReportProgress(progress, Math.Min(40, overallPercent), p.Message);
+            });
+            var attempts = await _onLocation.GetInductionHoldersCompletedSinceAsync(inductionId, completedSince, inductionProgress, ct);
             attemptsByInduction[inductionId] = LatestAttemptPerPerson(attempts, personIdField);
+            index++;
+            var totalAttempts = attemptsByInduction.Values.Sum(a => a.Count);
+            var pct = (int)(index * 40.0 / inductionIds.Count);
+            ReportProgress(progress, Math.Min(40, pct), $"Scanned {index}/{inductionIds.Count} induction(s); {totalAttempts} eligible record(s) found.");
         }
 
         var eligiblePersonIds = attemptsByInduction.Values
             .SelectMany(attempts => attempts.Keys)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (eligiblePersonIds.Count == 0) return Array.Empty<JsonElement>();
+        if (eligiblePersonIds.Count == 0)
+        {
+            ReportProgress(progress, 100, "No eligible records found.");
+            return Array.Empty<JsonElement>();
+        }
 
-        // Enumerating the whole collection costs a page request per 200 people. When only a small number of
-        // people hold a relevant induction it is much cheaper to request those records individually.
         IReadOnlyList<JsonElement> people;
         if (eligiblePersonIds.Count <= TargetedFetchThreshold)
         {
             _logger.Information("Initial match for {ProfileId}: {Count} eligible {Endpoint} record(s) from {Field}, fetching each by id",
                 profile.Id, eligiblePersonIds.Count, endpoint, personIdField);
+            ReportProgress(progress, 40, $"Fetching {eligiblePersonIds.Count} person record(s)...");
             people = await _onLocation.GetRecordsByIdAsync(endpoint, eligiblePersonIds.ToList(), ct);
-            // Guard against the by-id route being unavailable: enumerate rather than report nothing found.
+            ReportProgress(progress, 80, $"Fetched {people.Count} person record(s).");
             if (people.Count == 0)
             {
                 _logger.Warning("Initial match for {ProfileId}: no records came back by id, falling back to enumerating {Endpoint}", profile.Id, endpoint);
-                people = await GetAllAsync(endpoint, ct);
+                ReportProgress(progress, 80, "No records returned by id; falling back to enumeration...");
+                people = await GetAllAsync(endpoint, ct, progress, 80, 20);
             }
         }
         else
         {
             _logger.Information("Initial match for {ProfileId}: {Count} eligible {Endpoint} record(s) exceeds the targeted fetch threshold of {Threshold}, enumerating instead",
                 profile.Id, eligiblePersonIds.Count, endpoint, TargetedFetchThreshold);
-            people = await GetAllAsync(endpoint, ct);
+            ReportProgress(progress, 40, $"Enumerating {endpoint} records...");
+            people = await GetAllAsync(endpoint, ct, progress, 40, 60);
         }
 
+        ReportProgress(progress, 100, $"Loaded {people.Count} records; merging induction history...");
         return people
             .Select(person => new { Person = person, Id = GetString(person, "id") })
             .Where(x => !string.IsNullOrWhiteSpace(x.Id) && eligiblePersonIds.Contains(x.Id!))
@@ -187,6 +209,11 @@ public class OnLocationSourceService : IOnLocationSourceService
             .Where(x => x.Attempts.Count > 0)
             .Select(x => MergePersonAndInductions(x.Person, x.Attempts))
             .ToList();
+    }
+
+    private static void ReportProgress(IProgress<OnLocationFetchProgress>? progress, int percent, string message)
+    {
+        progress?.Report(new OnLocationFetchProgress(percent, message));
     }
 
     private static string GetPersonIdField(SyncProfile profile) => profile.EntityType == "SpMember" ? "sp_member_id" : "staff_id";
@@ -211,8 +238,9 @@ public class OnLocationSourceService : IOnLocationSourceService
     private const int InitialMatchMaxPages = 200;
     private const int TargetedFetchThreshold = 150;
 
-    private async Task<IReadOnlyList<JsonElement>> GetAllAsync(string endpoint, CancellationToken ct)
+    private async Task<IReadOnlyList<JsonElement>> GetAllAsync(string endpoint, CancellationToken ct, IProgress<OnLocationFetchProgress>? progress = null, int progressBase = 0, int progressRange = 100)
     {
+        const int assumedPages = 10;
         var all = new List<JsonElement>();
         var cursor = new SyncBookmark { ProfileId = "initial-match" };
         for (var page = 0; page < InitialMatchMaxPages && !ct.IsCancellationRequested; page++)
@@ -222,6 +250,9 @@ public class OnLocationSourceService : IOnLocationSourceService
                 ? await _onLocation.GetStaffAsync(cursor, ct, InitialMatchPageSize)
                 : await _onLocation.GetContractorMembersAsync(cursor, ct, InitialMatchPageSize);
             all.AddRange(batch);
+            var reportedPage = Math.Min(page + 1, assumedPages);
+            var percent = progressBase + (int)(reportedPage * (double)progressRange / assumedPages);
+            ReportProgress(progress, Math.Min(progressBase + progressRange, percent), $"Retrieved {all.Count} records...");
             if (batch.Count < InitialMatchPageSize || string.IsNullOrWhiteSpace(cursor.Cursor) || cursor.Cursor == previousCursor) break;
         }
         return all;

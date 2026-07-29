@@ -41,19 +41,11 @@
         <label class="form-label" for="Config_OnLocation_Password">Password (Basic auth only; leave blank for API Key)</label>
         <input class="form-control" type="password" id="Config_OnLocation_Password" name="Config.OnLocation.Password" value="@Model.Config.OnLocation.Password" />
     </div>
-    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
-        <label class="form-label">Scope</label>
-        <input class="form-control" asp-for="Config.OnLocation.Scope" />
-    </div>
 
     <h5 class="mt-4">Gallagher</h5>
     <div class="mb-3">
         <label class="form-label">Base URL (root, e.g. https://gallagher.local)</label>
         <input class="form-control" asp-for="Config.Gallagher.BaseUrl" />
-    </div>
-    <div class="mb-3">
-        <label class="form-label">Username</label>
-        <input class="form-control" asp-for="Config.Gallagher.Username" />
     </div>
     <div class="mb-3">
         <label class="form-label" for="Config_Gallagher_ApiKey">API Key</label>

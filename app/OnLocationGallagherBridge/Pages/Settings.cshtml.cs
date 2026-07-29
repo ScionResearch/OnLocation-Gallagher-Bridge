@@ -49,23 +49,18 @@ public class SettingsModel : PageModel
     public async Task<IActionResult> OnPostSaveAsync()
     {
         LogModelStateErrors();
-        Config.OnLocationConnectionTestedAt = null;
-        Config.GallagherConnectionTestedAt = null;
         await _config.SaveAsync(Config);
-        Message = "Settings saved and encrypted. Connection tests must be run again.";
+        Message = "Settings saved and encrypted.";
         return Page();
     }
 
     public async Task<IActionResult> OnPostTestOnLocationAsync()
     {
         LogModelStateErrors();
-        var previousGallagherTest = _config.GetConfig().GallagherConnectionTestedAt;
         _config.SetConfig(Config);
         var ok = await _onLocation.TestConnectionAsync();
         if (ok)
         {
-            Config.OnLocationConnectionTestedAt = DateTimeOffset.UtcNow;
-            Config.GallagherConnectionTestedAt = previousGallagherTest;
             await _config.SaveAsync(Config);
         }
         Message = ok ? "OnLocation connection OK" : $"OnLocation connection failed: {await _onLocation.GetLastErrorAsync()}";
@@ -75,13 +70,10 @@ public class SettingsModel : PageModel
     public async Task<IActionResult> OnPostTestGallagherAsync()
     {
         LogModelStateErrors();
-        var previousOnLocationTest = _config.GetConfig().OnLocationConnectionTestedAt;
         _config.SetConfig(Config);
         var ok = await _gallagher.TestConnectionAsync();
         if (ok)
         {
-            Config.OnLocationConnectionTestedAt = previousOnLocationTest;
-            Config.GallagherConnectionTestedAt = DateTimeOffset.UtcNow;
             await _config.SaveAsync(Config);
         }
         Message = ok ? "Gallagher connection OK" : $"Gallagher connection failed: {await _gallagher.GetLastErrorAsync()}";

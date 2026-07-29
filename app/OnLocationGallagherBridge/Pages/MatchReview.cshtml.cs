@@ -16,18 +16,16 @@ public class MatchReviewModel : PageModel
     private readonly IOnLocationSourceService _source;
     private readonly IGallagherConnector _gallagher;
     private readonly IIdentityMatcher _matcher;
-    private readonly ConfigService _config;
     private readonly IOnLocationConnector _onLocation;
     private readonly ITransformEngine _transform;
     private readonly IMemoryCache _cache;
 
-    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, ConfigService config, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache)
+    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache)
     {
         _db = db;
         _source = source;
         _gallagher = gallagher;
         _matcher = matcher;
-        _config = config;
         _onLocation = onLocation;
         _transform = transform;
         _cache = cache;
@@ -345,12 +343,6 @@ public class MatchReviewModel : PageModel
         var profile = await _db.SyncProfiles.FindAsync(SelectedProfileId);
         if (profile == null) return;
 
-        var config = _config.GetConfig();
-        if (!config.OnLocationConnectionTestedAt.HasValue || !config.GallagherConnectionTestedAt.HasValue)
-        {
-            Message = "Run and pass both connection tests in Connector Settings before starting Initial Record Match.";
-            return;
-        }
         if (!HasRequiredMapping(profile))
         {
             Message = "Add at least one field mapping and a primary match rule before starting Initial Record Match.";
@@ -376,10 +368,10 @@ public class MatchReviewModel : PageModel
                 profile = tracked;
             }
         }
-        SetPreviewStatus(PreviewRequestId, 1, "Checking the OnLocation and Gallagher connections");
+        SetPreviewStatus(PreviewRequestId, 1, "Checking the OnLocation and Gallagher connections", true, 0);
         if (!await _onLocation.TestConnectionAsync(ct) || !await _gallagher.TestConnectionAsync(ct))
         {
-            Message = "Initial Record Match preflight failed. Re-test both systems in Connector Settings.";
+            Message = "Initial Record Match preflight failed. Check the Connector Settings and that the configured credentials are correct.";
             SetPreviewStatus(PreviewRequestId, 4, Message, false);
             return;
         }
@@ -388,8 +380,13 @@ public class MatchReviewModel : PageModel
         IReadOnlyList<JsonElement> candidates;
         try
         {
-            SetPreviewStatus(PreviewRequestId, 2, "Retrieving OnLocation records and induction history");
-            records = await _source.GetInitialMatchRecordsAsync(profile, DateTimeOffset.UtcNow.AddDays(-CompletedSinceDays), ct);
+            SetPreviewStatus(PreviewRequestId, 2, "Retrieving OnLocation records and induction history", true, 5);
+            var onLocationProgress = new Progress<OnLocationFetchProgress>(p =>
+            {
+                var overallPercent = 5 + (int)(p.Percent * 0.75); // 5-80%
+                SetPreviewStatus(PreviewRequestId, 2, "Retrieving OnLocation records and induction history", true, overallPercent, p.Message);
+            });
+            records = await _source.GetInitialMatchRecordsAsync(profile, DateTimeOffset.UtcNow.AddDays(-CompletedSinceDays), onLocationProgress, ct);
             if (records.Count == 0)
             {
                 var onLocationError = await _onLocation.GetLastErrorAsync();
@@ -400,7 +397,7 @@ public class MatchReviewModel : PageModel
                 return;
             }
 
-            SetPreviewStatus(PreviewRequestId, 3, "Retrieving Gallagher cardholders and calculating matches");
+            SetPreviewStatus(PreviewRequestId, 3, "Retrieving Gallagher cardholders and calculating matches", true, 80);
             candidates = await _gallagher.GetAllCardholdersAsync(ct, BuildCandidateFieldSpecifier(profile));
             if (candidates.Count == 0) candidates = await _gallagher.GetAllCardholdersAsync(ct);
             if (candidates.Count == 0)
@@ -497,11 +494,11 @@ public class MatchReviewModel : PageModel
         if (Rows.Count == 0)
         {
             Message = $"{records.Count} OnLocation record(s) were retrieved but none had a usable name to review.";
-            SetPreviewStatus(PreviewRequestId, 4, Message, false);
+            SetPreviewStatus(PreviewRequestId, 4, Message, false, 100);
             return;
         }
 
-        SetPreviewStatus(PreviewRequestId, 4, $"Review ready: {Rows.Count} named records loaded, {Totals.Unresolved} need a decision", true);
+        SetPreviewStatus(PreviewRequestId, 4, $"Review ready: {Rows.Count} named records loaded, {Totals.Unresolved} need a decision", true, 100);
     }
 
     private static string BuildCandidateFieldSpecifier(SyncProfile profile)
@@ -574,10 +571,10 @@ public class MatchReviewModel : PageModel
         return !string.IsNullOrWhiteSpace(name) ? name : GetString(record, "name", "full_name", "fullName", "shortName");
     }
 
-    private void SetPreviewStatus(string? requestId, int step, string message, bool isSuccess = true)
+    private void SetPreviewStatus(string? requestId, int step, string message, bool isSuccess = true, int? progressPercent = null, string? detail = null)
     {
         if (string.IsNullOrWhiteSpace(requestId)) return;
-        _cache.Set(GetPreviewStatusCacheKey(requestId), new MatchPreviewStatus { Step = step, Message = message, IsSuccess = isSuccess }, TimeSpan.FromMinutes(15));
+        _cache.Set(GetPreviewStatusCacheKey(requestId), new MatchPreviewStatus { Step = step, Message = message, IsSuccess = isSuccess, ProgressPercent = progressPercent, Detail = detail }, TimeSpan.FromMinutes(15));
     }
 
     private static string GetPreviewStatusCacheKey(string requestId) => $"match-review-preview-status:{requestId}";
@@ -628,5 +625,7 @@ public class MatchReviewModel : PageModel
         public int Step { get; set; }
         public string Message { get; set; } = string.Empty;
         public bool IsSuccess { get; set; } = true;
+        public int? ProgressPercent { get; set; }
+        public string? Detail { get; set; }
     }
 }

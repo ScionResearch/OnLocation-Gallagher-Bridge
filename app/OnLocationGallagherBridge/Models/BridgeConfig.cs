@@ -10,53 +10,47 @@ public class BridgeConfig
     public SmtpConfig Smtp { get; set; } = new();
     public WebHostConfig WebHost { get; set; } = new();
     public LoggingConfig Logging { get; set; } = new();
-    public DateTimeOffset? OnLocationConnectionTestedAt { get; set; }
-    public DateTimeOffset? GallagherConnectionTestedAt { get; set; }
 }
 
 public class OnLocationConfig
 {
     public string BaseUrl { get; set; } = "https://api.whosonlocation.com/v1";
     public string AuthMode { get; set; } = "OAuth2"; // OAuth2 | ApiKey | Basic
-    public string ClientId { get; set; } = "";
-    public string ClientSecret { get; set; } = "";
-    public string ApiKey { get; set; } = "";
-    public string Password { get; set; } = "";
-    public string Scope { get; set; } = "domain:read";
-    public string TokenEndpoint { get; set; } = "https://login.whosonlocation.com/oauth2/token";
-    public string LastAccessToken { get; set; } = "";
-    public DateTimeOffset? TokenExpiresAt { get; set; }
+    public string? ClientId { get; set; } = "";
+    public string? ClientSecret { get; set; } = "";
+    public string? ApiKey { get; set; } = "";
+    public string? Password { get; set; } = "";
+    public string? TokenEndpoint { get; set; } = "https://login.whosonlocation.com/oauth2/token";
 }
 
 public class GallagherConfig
 {
-    public string BaseUrl { get; set; } = "";
-    public string Username { get; set; } = "";
-    public string ApiKey { get; set; } = "";
+    public string? BaseUrl { get; set; } = "";
+    public string? ApiKey { get; set; } = "";
     public bool DisableTlsVerification { get; set; } = false;
 }
 
 public class SmtpConfig
 {
-    public string Host { get; set; } = "";
+    public string? Host { get; set; } = "";
     public int Port { get; set; } = 587;
     public bool EnableSsl { get; set; } = true;
-    public string Username { get; set; } = "";
-    public string Password { get; set; } = "";
-    public string From { get; set; } = "";
+    public string? Username { get; set; } = "";
+    public string? Password { get; set; } = "";
+    public string? From { get; set; } = "";
     public List<string> AlertRecipients { get; set; } = new();
     public bool Enabled { get; set; } = false;
 }
 
 public class WebHostConfig
 {
-    public string Urls { get; set; } = "http://*:5000";
-    public string AdminPasswordHash { get; set; } = "";
+    public string? Urls { get; set; } = "http://*:5000";
+    public string? AdminPasswordHash { get; set; } = "";
 }
 
 public class LoggingConfig
 {
-    public string Path { get; set; } = "";
+    public string? Path { get; set; } = "";
     public int RetentionDays { get; set; } = 30;
-    public string MinimumLevel { get; set; } = "Information";
+    public string? MinimumLevel { get; set; } = "Information";
 }

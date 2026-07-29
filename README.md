@@ -341,7 +341,7 @@ Expiry dates are converted to Gallagher's expected format: end-of-day in the New
 - **SQLite DateTimeOffset ordering** — SQLite cannot order by `DateTimeOffset` in SQL, so audit and exception queries materialise results first and sort in-memory.
 - **Form value limit** — the form value count limit is raised to 65,536 to support the initial match review form, which posts ~10 values per record.
 - **Create with empty body** — Gallagher's cardholder create returns a 201 with an empty body; the connector falls back to the `Location` header to obtain the new cardholder's href.
-- **Connection testing** — both connectors provide `TestConnectionAsync` methods, callable from the Settings page, that validate credentials and reachability before the first sync.
+- **Connection testing** — both connectors provide `TestConnectionAsync` methods, callable from the Settings page or automatically before Initial Record Match, that validate credentials and reachability.
 
 ---
 
@@ -386,14 +386,14 @@ All credentials and settings are stored in an encrypted JSON file (see [Config S
 
 - **Base URL** — defaults to `https://api.whosonlocation.com/v1`.
 - **Auth Mode** — OAuth2, API Key, or Basic.
-- **OAuth2** — Client ID, Client Secret, Scope, Token Endpoint.
+- **OAuth2** — Client ID, Client Secret, Token Endpoint.
+  - The token endpoint expects the client ID and secret as **HTTP Basic auth** (`Authorization: Basic <base64(clientId:clientSecret)>`), with `grant_type=client_credentials` in the form body.
 - **API Key / Basic** — API Key, Password (Basic only).
 
 ### Gallagher
 
 - **Base URL** — the Command Centre server URL.
-- **Username** — the REST API operator username.
-- **API Key** — the operator's API key.
+- **API Key** — the operator's API key, used as the Basic auth password with an empty username.
 - **Disable TLS Verification** — for self-signed certificates.
 
 ### SMTP (Alerts)
@@ -501,9 +501,8 @@ The web UI is available at `http://localhost:5000`.
 
 1. **Open the web UI** at `http://localhost:5000`.
 2. **Configure connectors** on the **Connector Settings** page:
-   - Enter OnLocation credentials and click **Test Connection**.
-   - Enter Gallagher Command Centre credentials and click **Test Connection**.
-   - Save settings.
+   - Enter OnLocation credentials and Gallagher Command Centre credentials.
+   - Save settings. (Connection tests are still available but no longer required before Initial Record Match; the match preflight validates both connections automatically.)
 3. **Configure field mappings** on the **Field Mapping** page:
    - Select a profile (e.g. `employees` or `contractor-members`).
    - Choose the inductions to track (if applicable).

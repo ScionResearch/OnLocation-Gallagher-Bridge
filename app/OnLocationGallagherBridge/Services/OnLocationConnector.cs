@@ -13,7 +13,7 @@ public interface IOnLocationConnector
     Task<IReadOnlyList<JsonElement>> GetContractorMembersAsync(SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
     Task<IReadOnlyList<JsonElement>> GetInductionsAsync(SyncBookmark bookmark, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetInductionHoldersAsync(string inductionId, SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
-    Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, CancellationToken ct = default);
+    Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default);
     Task<InductionHolderScan> GetNewInductionHoldersAsync(string inductionId, string? afterId, DateTimeOffset completedSince, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetRecordsByIdAsync(string endpoint, IReadOnlyCollection<string> ids, CancellationToken ct = default);
     Task<string?> GetLastErrorAsync();
@@ -103,7 +103,7 @@ public class OnLocationConnector : IOnLocationConnector
         {
             // Nothing processed yet, so walk backwards from the newest record and stop once the window is
             // exhausted rather than starting from the beginning of time.
-            var seeded = await GetInductionHoldersCompletedSinceAsync(inductionId, completedSince, ct);
+            var seeded = await GetInductionHoldersCompletedSinceAsync(inductionId, completedSince, null, ct);
             var highestSeeded = HighestId(seeded, null);
             _logger.Information("OnLocation induction {InductionId}: seeding from the {Since:yyyy-MM-dd} window, {Count} holder record(s), highest id {HighestId}",
                 inductionId, completedSince, seeded.Count, highestSeeded ?? "(none)");
@@ -173,7 +173,7 @@ public class OnLocationConnector : IOnLocationConnector
         return highest;
     }
 
-    public async Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, CancellationToken ct = default)
+    public async Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default)
     {
         // OnLocation rejects `q` filters on `completed` ("Filtering by 'completed' is not supported"),
         // so the date is applied client-side. Every page must be scanned: a renewal updates `completed`
@@ -204,6 +204,10 @@ public class OnLocationConnector : IOnLocationConnector
             records.AddRange(inWindow);
             _activity.AddChecked(page.Count, $"Induction {inductionId}: checked {scanned} holder record(s), {records.Count} in the window");
             _logger.Information("OnLocation induction {InductionId} page {Page}: {PageCount} holder(s), {InWindow} completed on or after {Since:yyyy-MM-dd}, running total {Total}", inductionId, pages, page.Count, inWindow.Count, since, records.Count);
+
+            // Report progress assuming ~10 pages per induction so the bar moves with every page.
+            var percent = Math.Min(100, pages * 100 / 10);
+            progress?.Report(new OnLocationFetchProgress(percent, $"{records.Count} record(s) found ({scanned} searched)..."));
 
             stalePages = inWindow.Count == 0 ? stalePages + 1 : 0;
             if (stalePages > HolderLookaheadPages)
@@ -412,32 +416,56 @@ public class OnLocationConnector : IOnLocationConnector
 
     private string? _cachedToken;
     private DateTimeOffset? _tokenExpiresAt;
+    private string? _tokenCredentialFingerprint;
 
     private async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
-        if (!string.IsNullOrEmpty(_cachedToken) && _tokenExpiresAt.HasValue && DateTimeOffset.UtcNow.AddMinutes(1) < _tokenExpiresAt.Value)
-            return _cachedToken;
-
-        var client = _httpFactory.CreateClient();
-        var body = new Dictionary<string, string>
+        var fingerprint = GetCredentialFingerprint();
+        if (!string.IsNullOrEmpty(_cachedToken) &&
+            _tokenCredentialFingerprint == fingerprint &&
+            _tokenExpiresAt.HasValue &&
+            DateTimeOffset.UtcNow.AddMinutes(1) < _tokenExpiresAt.Value)
         {
-            ["grant_type"] = "client_credentials",
-            ["client_id"] = Cfg.ClientId,
-            ["client_secret"] = Cfg.ClientSecret,
-            ["scope"] = Cfg.Scope
-        };
-        var response = await client.PostAsync(Cfg.TokenEndpoint, new FormUrlEncodedContent(body), ct);
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
+            return _cachedToken;
+        }
+
+        _logger.Information("Requesting new OnLocation OAuth2 access token");
+        var client = _httpFactory.CreateClient();
+
+        // OnLocation's token endpoint requires the client id/secret as HTTP Basic auth,
+        // NOT as form fields. Sending them in the body results in a 403 Forbidden.
+        var clientId = Cfg.ClientId ?? string.Empty;
+        var clientSecret = Cfg.ClientSecret ?? string.Empty;
+        var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+
+        using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "client_credentials"
+        });
+        using var response = await client.PostAsync(Cfg.TokenEndpoint, content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            _lastError = $"OnLocation token request failed: {(int)response.StatusCode} {response.StatusCode}. Response: {responseBody}";
+            _logger.Error(_lastError);
+            throw new HttpRequestException(_lastError);
+        }
+
+        using var doc = JsonDocument.Parse(responseBody);
         _cachedToken = doc.RootElement.GetProperty("access_token").GetString();
+        _tokenCredentialFingerprint = fingerprint;
         if (int.TryParse(doc.RootElement.GetProperty("expires_in").GetRawText(), out var expiresIn))
             _tokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
         else
             _tokenExpiresAt = DateTimeOffset.UtcNow.AddHours(1);
-        Cfg.LastAccessToken = _cachedToken ?? "";
-        Cfg.TokenExpiresAt = _tokenExpiresAt;
         return _cachedToken!;
+    }
+
+    private string GetCredentialFingerprint()
+    {
+        return $"{Cfg.ClientId}:{Cfg.ClientSecret}";
     }
 
     private async Task<bool> HandleResponseAsync(HttpResponseMessage response, string body, CancellationToken ct)

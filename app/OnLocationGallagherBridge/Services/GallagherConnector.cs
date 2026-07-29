@@ -50,7 +50,7 @@ public class GallagherConnector : IGallagherConnector
     {
         try
         {
-            _logger.Information("Testing Gallagher connection to {BaseUrl} as user '{User}'", Cfg.BaseUrl, string.IsNullOrWhiteSpace(Cfg.Username) ? "(empty)" : Cfg.Username);
+            _logger.Information("Testing Gallagher connection to {BaseUrl}", Cfg.BaseUrl);
             if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "Gallagher BaseUrl not configured"; _logger.Warning("Gallagher BaseUrl is empty"); return false; }
             var root = await GetApiRootAsync(ct);
             if (root.HasValue)
@@ -390,7 +390,8 @@ public class GallagherConnector : IGallagherConnector
         };
         var client = new HttpClient(handler);
         client.BaseAddress = new Uri(Cfg.BaseUrl.TrimEnd('/') + "/");
-        var bytes = Encoding.UTF8.GetBytes($"{Cfg.Username}:{Cfg.ApiKey}");
+        var apiKey = Cfg.ApiKey ?? string.Empty;
+        var bytes = Encoding.UTF8.GetBytes($":{apiKey}");
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
         return client;
     }
