@@ -75,7 +75,7 @@ public class GallagherConnector : IGallagherConnector
     public async Task<JsonElement?> GetApiRootAsync(CancellationToken ct = default)
     {
         if (_apiRoot.HasValue) return _apiRoot.Value;
-        _logger.Information("Discovering Gallagher API root at {BaseUrl}api", Cfg.BaseUrl.TrimEnd('/') + "/");
+        _logger.Information("Discovering Gallagher API root at {BaseUrl}api", (Cfg.BaseUrl ?? string.Empty).TrimEnd('/') + "/");
         var client = CreateClient();
         _logger.Information("Sending Gallagher GET api");
         var response = await client.GetAsync("api", ct);

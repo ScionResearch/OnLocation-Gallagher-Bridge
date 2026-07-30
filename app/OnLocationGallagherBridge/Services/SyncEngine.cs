@@ -31,6 +31,7 @@ public class SyncEngine : BackgroundService
             {
                 _logger.LogError(ex, "Sync engine loop failed");
             }
+            _logger.LogInformation("Sync engine sleeping for 1 minute");
             await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }
     }
@@ -44,26 +45,76 @@ public class SyncEngine : BackgroundService
         var now = DateTimeOffset.UtcNow;
 
         var allEnabled = await db.SyncProfiles.Where(p => p.Enabled).ToListAsync(ct);
-        var profiles = allEnabled.Where(p => p.NextRun == null || p.NextRun <= now).ToList();
+        foreach (var profile in allEnabled)
+        {
+            var changed = false;
+            if (profile.NextRun == null)
+            {
+                profile.NextRun = now.AddMinutes(Math.Max(1, profile.FastSyncIntervalMinutes));
+                changed = true;
+            }
+            if (profile.NextFullRun == null)
+            {
+                profile.NextFullRun = ComputeNextFullRun(now, profile);
+                changed = true;
+            }
+            if (changed) await db.SaveChangesAsync(ct);
+        }
+
+        var profiles = allEnabled.Where(p => IsDue(p, now)).ToList();
         if (profiles.Count == 0)
         {
             // The loop was otherwise completely silent whenever every profile was disabled or waiting, so a
             // profile that never syncs left no trace in the log to explain why.
             var configured = await db.SyncProfiles.CountAsync(ct);
-            _logger.LogDebug("Sync engine has nothing due: {Configured} profile(s) configured, {Enabled} enabled, earliest next run {NextRun}",
-                configured, allEnabled.Count, allEnabled.Count == 0 ? null : allEnabled.Min(p => p.NextRun));
+            var earliest = allEnabled.Count == 0 ? null : allEnabled.Min(p => p.NextRun);
+            var earliestText = earliest.HasValue ? earliest.Value.ToString("u") : "(none)";
+            _logger.LogInformation("Sync engine has nothing due: {Configured} profile(s) configured, {Enabled} enabled, earliest next run {NextRun}",
+                configured, allEnabled.Count, earliestText);
+            return;
         }
+
+        _logger.LogInformation("Sync engine found {Due} due profile(s): {Profiles}", profiles.Count, string.Join(", ", profiles.Select(p => p.Id)));
 
         foreach (var profile in profiles)
         {
-            await RunProfileAsync(db, source, processor, profile, ct);
+            var fullSync = IsFullSyncDue(profile, now);
+            await RunProfileAsync(db, source, processor, profile, fullSync, ct);
             profile.LastRun = now;
-            profile.NextRun = now.AddMinutes(profile.PollingIntervalMinutes);
+            profile.NextRun = now.AddMinutes(Math.Max(1, profile.FastSyncIntervalMinutes));
+            if (fullSync)
+                profile.NextFullRun = ComputeNextFullRun(now, profile);
             await db.SaveChangesAsync(ct);
         }
     }
 
-    private async Task RunProfileAsync(BridgeDbContext db, IOnLocationSourceService source, IJobProcessor processor, SyncProfile profile, CancellationToken ct)
+    private static bool IsFastSyncDue(SyncProfile profile, DateTimeOffset now)
+    {
+        if (profile.NextRun == null || profile.NextRun <= now) return true;
+        if (profile.LastRun.HasValue && now >= profile.LastRun.Value.AddMinutes(Math.Max(1, profile.FastSyncIntervalMinutes))) return true;
+        return false;
+    }
+
+    private static bool IsFullSyncDue(SyncProfile profile, DateTimeOffset now)
+    {
+        if (profile.NextFullRun.HasValue && profile.NextFullRun.Value <= now) return true;
+        return false;
+    }
+
+    private static bool IsDue(SyncProfile profile, DateTimeOffset now)
+        => IsFastSyncDue(profile, now) || IsFullSyncDue(profile, now);
+
+    public static DateTimeOffset ComputeNextFullRun(DateTimeOffset from, SyncProfile profile)
+    {
+        var intervalDays = Math.Max(1, profile.FullSyncIntervalDays);
+        var timeOfDay = TimeSpan.FromMinutes(Math.Clamp(profile.FullSyncTimeOfDayMinutes, 0, 1439));
+        var local = from.ToLocalTime();
+        var candidate = local.Date.Add(timeOfDay);
+        if (candidate <= local) candidate = candidate.AddDays(intervalDays);
+        return new DateTimeOffset(candidate, local.Offset);
+    }
+
+    private async Task RunProfileAsync(BridgeDbContext db, IOnLocationSourceService source, IJobProcessor processor, SyncProfile profile, bool fullSync, CancellationToken ct)
     {
         if (!profile.InitialMatchCompleted)
         {
@@ -71,9 +122,10 @@ public class SyncEngine : BackgroundService
             return;
         }
 
+        var mode = fullSync ? "full" : "fast";
         var correlation = Guid.NewGuid().ToString("N");
-        _logger.LogInformation("Running profile {Profile} with correlation {Correlation}", profile.Id, correlation);
-        _activity.Begin(profile.Id, "Starting");
+        _logger.LogInformation("Running profile {Profile} ({Mode} sync) with correlation {Correlation}", profile.Id, mode, correlation);
+        _activity.Begin(profile.Id, $"Starting ({mode} sync)");
 
         var bookmark = await db.SyncBookmarks.FindAsync(new object?[] { profile.Id }, cancellationToken: ct);
         var newBookmark = bookmark == null;
@@ -82,7 +134,7 @@ public class SyncEngine : BackgroundService
         IReadOnlyList<JsonElement> records;
         try
         {
-            records = await source.GetRecordsAsync(profile, bookmark, ct);
+            records = await source.GetRecordsAsync(profile, bookmark, fullSync, ct);
         }
         catch (Exception ex)
         {
@@ -97,20 +149,27 @@ public class SyncEngine : BackgroundService
             var id = GetId(record);
             if (string.IsNullOrEmpty(id)) continue;
 
+            var payload = record.ToString() ?? "{}";
             var existing = await db.SyncJobs.FirstOrDefaultAsync(j => j.ProfileId == profile.Id && j.SourceId == id && j.Status == "Pending", ct);
             if (existing != null)
             {
-                existing.PayloadJson = record.ToString() ?? "{}";
+                existing.PayloadJson = payload;
                 existing.UpdatedAt = DateTimeOffset.UtcNow;
             }
             else
             {
+                var completedJobs = await db.SyncJobs
+                    .Where(j => j.ProfileId == profile.Id && j.SourceId == id && j.Status == "Complete")
+                    .ToListAsync(ct);
+                var latestCompleted = completedJobs.OrderByDescending(j => j.UpdatedAt).FirstOrDefault();
+                if (latestCompleted != null && latestCompleted.PayloadJson == payload) continue;
+
                 db.SyncJobs.Add(new SyncJob
                 {
                     ProfileId = profile.Id,
                     SourceType = profile.EntityType,
                     SourceId = id,
-                    PayloadJson = record.ToString() ?? "{}",
+                    PayloadJson = payload,
                     Status = "Pending",
                     CorrelationId = correlation
                 });

@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
@@ -21,9 +22,9 @@ public class MatchReviewModel : PageModel
     private readonly ITransformEngine _transform;
     private readonly IMemoryCache _cache;
     private readonly IConfigurationStatusService _statusService;
-    private readonly IServiceProvider _services;
+    private readonly IServiceScopeFactory _scopeFactory;
 
-    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache, IConfigurationStatusService statusService, IServiceProvider services)
+    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache, IConfigurationStatusService statusService, IServiceScopeFactory scopeFactory)
     {
         _db = db;
         _source = source;
@@ -33,7 +34,18 @@ public class MatchReviewModel : PageModel
         _transform = transform;
         _cache = cache;
         _statusService = statusService;
-        _services = services;
+        _scopeFactory = scopeFactory;
+    }
+
+    public override async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context, PageHandlerExecutionDelegate next)
+    {
+        var status = await _statusService.GetOverallStateAsync(false, context.HttpContext.RequestAborted);
+        if (status.FieldMapping != ConfigurationStatus.Complete)
+        {
+            context.Result = new RedirectToPageResult("/Setup");
+            return;
+        }
+        await next();
     }
 
     [BindProperty]
@@ -276,7 +288,7 @@ public class MatchReviewModel : PageModel
     {
         try
         {
-            await using var scope = _services.CreateAsyncScope();
+            await using var scope = _scopeFactory.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<BridgeDbContext>();
             var gallagher = scope.ServiceProvider.GetRequiredService<IGallagherConnector>();
             var transform = scope.ServiceProvider.GetRequiredService<ITransformEngine>();
@@ -446,7 +458,7 @@ public class MatchReviewModel : PageModel
     private async Task LoadProfilesAsync(CancellationToken ct)
     {
         var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
-        ProfileOptions = profiles.Select(p => new SelectListItem(p.Id, p.Id, p.Id == SelectedProfileId)).ToList();
+        ProfileOptions = profiles.Select(p => new SelectListItem(RecordGroupDisplay.GetName(p.Id), p.Id, p.Id == SelectedProfileId)).ToList();
     }
 
     private async Task BuildPreviewAsync(CancellationToken ct)

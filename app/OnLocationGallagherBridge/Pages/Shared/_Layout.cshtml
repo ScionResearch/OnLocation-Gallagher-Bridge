@@ -1,4 +1,5 @@
-﻿<!DOCTYPE html>
+﻿@inject OnLocationGallagherBridge.Services.IConfigurationStatusService StatusService
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
@@ -8,7 +9,7 @@
     <link rel="stylesheet" href="~/lib/bootstrap/dist/css/bootstrap.min.css" />
     <link rel="stylesheet" href="~/css/site.css" asp-append-version="true" />
 </head>
-<body>
+<body class="d-flex flex-column min-vh-100">
     <header>
         <nav class="navbar navbar-expand-sm navbar-toggleable-sm navbar-light bg-white border-bottom box-shadow mb-3">
             <div class="container">
@@ -23,19 +24,21 @@
                             <a class="nav-link text-dark" asp-area="" asp-page="/Index">Dashboard</a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Settings">Connector Settings</a>
+                            <a class="nav-link text-dark" asp-area="" asp-page="/Setup">Setup</a>
                         </li>
+                        @{
+                            var setupStatus = await StatusService.GetOverallStateAsync(false);
+                            var setupComplete = setupStatus.Overall == OnLocationGallagherBridge.Services.ConfigurationStatus.Complete;
+                        }
                         <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/ManualSync">Manual Sync</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Mapping">Field Mapping</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/MatchReview">Initial Record Match</a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link text-dark" asp-area="" asp-page="/Exceptions">Exceptions</a>
+                            @if (setupComplete)
+                            {
+                                <a class="nav-link text-dark" asp-area="" asp-page="/Exceptions">Exceptions</a>
+                            }
+                            else
+                            {
+                                <span class="nav-link disabled">Exceptions</span>
+                            }
                         </li>
                         <li class="nav-item">
                             <a class="nav-link text-dark" asp-area="" asp-page="/Audit">Audit</a>
@@ -45,15 +48,15 @@
             </div>
         </nav>
     </header>
-    <div class="container">
+    <div class="container flex-grow-1">
         <main role="main" class="pb-3">
             @RenderBody()
         </main>
     </div>
 
-    <footer class="border-top footer text-muted">
-        <div class="container">
-            &copy; 2026 - OnLocationGallagherBridge - <a asp-area="" asp-page="/Privacy">Privacy</a>
+    <footer class="border-top footer text-muted mt-auto py-3">
+        <div class="container text-center">
+            OnLocationGallagherBridge - <a href="https://github.com/PeakeElectronicInnovation/OnLocation-Gallagher-Bridge" target="_blank" rel="noopener">GitHub Repository</a>
         </div>
     </footer>
 

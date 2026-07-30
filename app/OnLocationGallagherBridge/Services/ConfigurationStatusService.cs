@@ -116,8 +116,7 @@ public class ConfigurationStatusService : IConfigurationStatusService
         var config = _config.GetConfig();
         var connector = await GetConnectorSettingsStatusAsync(config, testConnections, ct);
         var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
-        var enabledProfiles = profiles.Where(p => p.Enabled).ToList();
-        if (enabledProfiles.Count == 0)
+        if (profiles.Count == 0)
         {
             return new ConfigurationState(
                 connector,
@@ -126,8 +125,8 @@ public class ConfigurationStatusService : IConfigurationStatusService
                 MinStatus(connector, ConfigurationStatus.NotConfigured, ConfigurationStatus.NotConfigured));
         }
 
-        var mapping = enabledProfiles.Select(GetFieldMappingStatus).Min();
-        var initial = enabledProfiles.Select(GetInitialMatchStatus).Min();
+        var mapping = profiles.Select(GetFieldMappingStatus).Max();
+        var initial = profiles.Select(GetInitialMatchStatus).Max();
         var overall = MinStatus(connector, mapping, initial);
         return new ConfigurationState(connector, mapping, initial, overall);
     }
@@ -135,9 +134,8 @@ public class ConfigurationStatusService : IConfigurationStatusService
     public async Task<ConfigurationStatus> GetInitialMatchStatusForAllAsync(CancellationToken ct = default)
     {
         var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
-        var enabledProfiles = profiles.Where(p => p.Enabled).ToList();
-        if (enabledProfiles.Count == 0) return ConfigurationStatus.NotConfigured;
-        return enabledProfiles.Select(GetInitialMatchStatus).Min();
+        if (profiles.Count == 0) return ConfigurationStatus.NotConfigured;
+        return profiles.Select(GetInitialMatchStatus).Max();
     }
 
     private static bool IsOnLocationComplete(OnLocationConfig? c)

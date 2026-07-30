@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using OnLocationGallagherBridge.Data;
@@ -15,14 +16,27 @@ public class ExceptionsModel : PageModel
     private readonly IGallagherConnector _gallagher;
     private readonly IAuditService _audit;
     private readonly Serilog.ILogger _logger;
+    private readonly IConfigurationStatusService _statusService;
 
-    public ExceptionsModel(BridgeDbContext db, IIdentityMatcher matcher, IGallagherConnector gallagher, IAuditService audit)
+    public ExceptionsModel(BridgeDbContext db, IIdentityMatcher matcher, IGallagherConnector gallagher, IAuditService audit, IConfigurationStatusService statusService)
     {
         _db = db;
         _matcher = matcher;
         _gallagher = gallagher;
         _audit = audit;
+        _statusService = statusService;
         _logger = Serilog.Log.Logger.ForContext<ExceptionsModel>();
+    }
+
+    public override async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context, PageHandlerExecutionDelegate next)
+    {
+        var status = await _statusService.GetOverallStateAsync(false, context.HttpContext.RequestAborted);
+        if (status.Overall != ConfigurationStatus.Complete)
+        {
+            context.Result = new RedirectToPageResult("/Setup");
+            return;
+        }
+        await next();
     }
 
     public class FailureRow
@@ -241,10 +255,11 @@ public class ExceptionsModel : PageModel
 
     private async Task LoadManualMatchesAsync(CancellationToken ct)
     {
-        var queueItems = await _db.ManualMatchQueues
+        var queueItems = (await _db.ManualMatchQueues
             .Where(m => m.Status == "Pending")
+            .ToListAsync(ct))
             .OrderByDescending(m => m.CreatedAt)
-            .ToListAsync(ct);
+            .ToList();
 
         var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
         var profileMap = profiles.ToDictionary(p => p.Id);
@@ -309,6 +324,11 @@ public class ExceptionsModel : PageModel
     {
         var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
         if (queue == null) return RedirectToPage();
+        if (profile == null)
+        {
+            TempData["Message"] = "Profile not found.";
+            return RedirectToPage();
+        }
 
         var mapping = await FindOrAddMappingAsync(profile, queue.SourceId, ct);
         mapping.GallagherHref = string.Empty;
@@ -326,6 +346,11 @@ public class ExceptionsModel : PageModel
     {
         var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
         if (queue == null) return RedirectToPage();
+        if (profile == null)
+        {
+            TempData["Message"] = "Profile not found.";
+            return RedirectToPage();
+        }
         if (string.IsNullOrWhiteSpace(candidateHref))
         {
             TempData["Message"] = "Please select a cardholder to match.";
@@ -347,6 +372,11 @@ public class ExceptionsModel : PageModel
     {
         var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
         if (queue == null) return RedirectToPage();
+        if (profile == null)
+        {
+            TempData["Message"] = "Profile not found.";
+            return RedirectToPage();
+        }
 
         var mapping = await FindOrAddMappingAsync(profile, queue.SourceId, ct);
         mapping.GallagherHref = string.Empty;

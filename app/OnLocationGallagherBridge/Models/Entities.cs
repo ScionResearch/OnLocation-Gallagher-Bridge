@@ -20,6 +20,15 @@ public class SyncProfile
     // How far back a poll looks for completed inductions. Bounds the very first scan, which would otherwise
     // read the entire induction history, and keeps every later scan cheap.
     public int SyncWindowDays { get; set; } = 7;
+    // Fast sync only inspects the newest holder records and is meant for recently completed inductions.
+    public int FastSyncIntervalMinutes { get; set; } = 5;
+    // Full sync re-scans a configurable date window to catch old induction invites that were completed late.
+    public int FullSyncIntervalDays { get; set; } = 1;
+    // Minutes since midnight (0 - 1439) at which the full sync should run.
+    public int FullSyncTimeOfDayMinutes { get; set; } = 60;
+    // How many months back the full sync looks. Null means all existing records.
+    public int? FullSyncLookbackMonths { get; set; }
+    public DateTimeOffset? NextFullRun { get; set; }
     public string OnLocationEndpoint { get; set; } = string.Empty;
     public string MatchRulesJson { get; set; } = "[]";
     public string FieldMapJson { get; set; } = "[]";

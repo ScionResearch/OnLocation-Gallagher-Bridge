@@ -15,16 +15,16 @@
 
 <form method="post">
     <div class="mb-3">
-        <label class="form-label">Sync Profile</label>
+        <label class="form-label">Record Group</label>
         <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
     </div>
     <div class="mb-3">
-        <button type="submit" class="btn btn-outline-secondary btn-sm" formaction="/MatchReview?handler=LoadInductions">Load inductions for this profile</button>
+        <button type="submit" class="btn btn-outline-secondary btn-sm" formaction="/MatchReview?handler=LoadInductions">Load inductions for this record group</button>
     </div>
 
     @if (Model.InductionOptions.Any())
     {
-        <div class="card mb-3">
+        <div class="card shadow-sm mb-3">
             <div class="card-body">
                 <h6 class="card-title">Inductions to pull through</h6>
                 <p class="small text-muted">Only ticked inductions are scanned, for the initial match and for ongoing sync. Each unticked induction saves a full holder scan.</p>
@@ -61,8 +61,9 @@
     </div>
     <input type="hidden" asp-for="PreviewRequestId" id="previewRequestId" />
     <button type="submit" class="btn btn-secondary" formaction="/MatchReview?handler=Preview" id="buildPreviewButton">Build initial match review</button>
+    <a class="btn @(Model.InitialMatchStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/Index">Go to dashboard</a>
 
-    <div class="card mt-3 d-none" id="previewProgress">
+    <div class="card mt-3 shadow-sm d-none" id="previewProgress">
         <div class="card-body">
             <div class="d-flex align-items-center gap-2">
                 <div class="spinner-border spinner-border-sm" role="status" id="previewSpinner"></div>
@@ -85,7 +86,7 @@
 
 @if (Model.Totals is not null)
 {
-    <div class="card mt-3">
+    <div class="card mt-3 shadow-sm">
         <div class="card-body">
             <h5 class="card-title">Review and confirm</h5>
             <p class="small text-muted mb-3">Resolve every OnLocation record before confirming. Records that still need attention are shown at the top.</p>
@@ -146,6 +147,20 @@
             </select>
         </div>
         <button class="btn btn-outline-secondary" type="button" id="applyGlobalResolutionButton">Apply</button>
+    </div>
+
+    <div class="card mt-3 shadow-sm d-none" id="pushProgress">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-2">
+                <div class="spinner-border spinner-border-sm" role="status" id="pushSpinner"></div>
+                <span id="pushComplete" class="badge rounded-pill d-none"></span>
+                <div>
+                    <strong id="pushStatus">Preparing to push changes to Gallagher</strong>
+                    <div id="pushDetail" class="text-muted small"></div>
+                </div>
+            </div>
+            <div class="progress mt-3"><div class="progress-bar" id="pushProgressBar" style="width: 0%"></div></div>
+        </div>
     </div>
 }
 @if (Model.Rows.Any())
@@ -256,25 +271,11 @@
         </div>
     </div>
 
-    <div class="card mt-3 d-none" id="pushProgress">
-        <div class="card-body">
-            <div class="d-flex align-items-center gap-2">
-                <div class="spinner-border spinner-border-sm" role="status" id="pushSpinner"></div>
-                <span id="pushComplete" class="badge rounded-pill d-none"></span>
-                <div>
-                    <strong id="pushStatus">Preparing to push changes to Gallagher</strong>
-                    <div id="pushDetail" class="text-muted small"></div>
-                </div>
-            </div>
-            <div class="progress mt-3"><div class="progress-bar" id="pushProgressBar" style="width: 0%"></div></div>
-        </div>
-    </div>
-
     <template id="candidateOptions">@foreach (var option in Model.CandidateOptions){<option value="@option.Value">@option.Text</option>}</template>
 }
 @if (Model.PushStatus is not null)
 {
-    <div class="card mt-3">
+    <div class="card mt-3 shadow-sm">
         <div class="card-body">
             <h5 class="card-title">@(Model.PushStatus.IsSuccess ? "Initial match applied" : "Initial match completed with failures")</h5>
             <p>@Model.PushStatus.Detail</p>

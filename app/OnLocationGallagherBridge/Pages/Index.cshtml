@@ -16,7 +16,7 @@
 
 <div class="row g-3 mb-3">
     <div class="col-12">
-        <div class="card h-100">
+        <div class="card h-100 shadow-sm">
             <div class="card-body">
                 <h5 class="card-title">Health</h5>
                 <div class="row g-3">
@@ -44,55 +44,101 @@
 
 <div class="row g-3">
     <div class="col-md-8">
-        <div class="card h-100">
+        <div class="card h-100 shadow-sm">
             <div class="card-body">
-                <h5 class="card-title">Profiles</h5>
+                <h5 class="card-title">Record Groups</h5>
                 <ul class="list-group list-group-flush">
                     @foreach (var p in Model.Profiles)
                     {
+                        var collapseId = $"profile-collapse-{p.Id}";
+                        var mappingStatus = Model.ProfileMappingStatus.GetValueOrDefault(p.Id);
+                        var initialStatus = Model.ProfileInitialMatchStatus.GetValueOrDefault(p.Id);
+                        var configured = mappingStatus == ConfigurationStatus.Complete && initialStatus == ConfigurationStatus.Complete;
                         <li class="list-group-item">
                             <div class="d-flex justify-content-between align-items-center">
                                 <span>
-                                    <strong>@p.Id</strong>
-                                    <span class="badge bg-@(p.Enabled ? "success" : "secondary") ms-2">@(p.Enabled ? "on" : "off")</span>
-                                    @if (Model.ProfileMappingStatus.TryGetValue(p.Id, out var mappingStatus))
+                                    <strong>@RecordGroupDisplay.GetName(p.Id)</strong>
+                                    @if (configured)
                                     {
+                                        <span class="badge bg-@(p.Enabled ? "success" : "secondary") ms-2">@(p.Enabled ? "on" : "off")</span>
                                         <span class="ms-1"><partial name="_ConfigurationStatus" model="mappingStatus" /></span>
-                                    }
-                                    @if (Model.ProfileInitialMatchStatus.TryGetValue(p.Id, out var initialStatus))
-                                    {
                                         <span class="ms-1"><partial name="_ConfigurationStatus" model="initialStatus" /></span>
                                     }
-                                    @if (!p.InitialMatchCompleted)
+                                    else
                                     {
-                                        <small class="d-block text-muted">Initial match not confirmed</small>
+                                        <span class="badge bg-secondary ms-2">Not configured</span>
                                     }
                                 </span>
-                                <form method="post" asp-page-handler="Toggle" class="d-inline">
-                                    <input type="hidden" name="profileId" value="@p.Id" />
-                                    <input type="hidden" name="enable" value="@((!p.Enabled).ToString().ToLowerInvariant())" />
-                                    <button type="submit" class="btn btn-sm btn-outline-@(p.Enabled ? "secondary" : "primary")">@(p.Enabled ? "Turn off" : "Turn on")</button>
-                                </form>
+                                @if (configured)
+                                {
+                                    <form method="post" asp-page-handler="Toggle" class="d-inline form-check form-switch m-0">
+                                        <input type="hidden" name="profileId" value="@p.Id" />
+                                        <input class="form-check-input" type="checkbox" role="switch" id="enable-@p.Id" name="enable" value="true" @(p.Enabled ? "checked" : "") onchange="this.form.submit()" />
+                                        <label class="form-check-label" for="enable-@p.Id">Sync enabled</label>
+                                    </form>
+                                }
+                                else
+                                {
+                                    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#@collapseId" aria-expanded="false" aria-controls="@collapseId">
+                                        Expand <span aria-hidden="true">&#9660;</span>
+                                    </button>
+                                }
                             </div>
-                            <div class="d-flex justify-content-between align-items-end mt-2">
-                                <small class="text-muted">
-                                    Last run @(p.LastRun?.ToLocalTime().ToString("g") ?? "never")<br />
-                                    Next run @(p.Enabled ? (p.NextRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")
-                                </small>
-                                <form method="post" asp-page-handler="Schedule" class="d-flex gap-2 align-items-center">
-                                    <input type="hidden" name="profileId" value="@p.Id" />
-                                    <label class="form-label mb-0 small text-nowrap">Sync</label>
-                                    <select name="minutes" class="form-select form-select-sm">
-                                        @foreach (var option in IndexModel.IntervalOptions)
+                            <div class="mt-2 collapse @(configured ? "show" : "")" id="@collapseId">
+                                <div class="d-flex justify-content-between align-items-start">
+                                    <small class="text-muted">
+                                        Last run @(p.LastRun?.ToLocalTime().ToString("g") ?? "never")<br />
+                                        Next fast run @(p.Enabled ? (p.NextRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")<br />
+                                        Next full run @(p.Enabled ? (p.NextFullRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")
+                                    </small>
+                                    <form method="post" asp-page-handler="Schedule" class="d-flex flex-wrap gap-2 align-items-center schedule-form">
+                                        <input type="hidden" name="profileId" value="@p.Id" />
+                                        <label class="form-label mb-0 small text-nowrap">Fast</label>
+                                        <select name="fastMinutes" class="form-select form-select-sm" style="width: 7rem;">
+                                            @foreach (var option in IndexModel.IntervalOptions)
+                                            {
+                                                <option value="@option.Minutes" selected="@(option.Minutes == p.FastSyncIntervalMinutes)">@option.Label</option>
+                                            }
+                                        </select>
+                                        <label class="form-label mb-0 small text-nowrap">Full</label>
+                                        <select name="fullDays" class="form-select form-select-sm" style="width: 7rem;">
+                                            @foreach (var option in IndexModel.FullIntervalOptions)
+                                            {
+                                                <option value="@option.Days" selected="@(option.Days == p.FullSyncIntervalDays)">@option.Label</option>
+                                            }
+                                        </select>
+                                        <input type="time" name="fullTime" value="@TimeSpan.FromMinutes(p.FullSyncTimeOfDayMinutes).ToString("hh\\:mm")" class="form-control form-control-sm" style="width: 6rem;" />
+                                        <input type="number" name="fullMonths" min="0" max="120" value="@(p.FullSyncLookbackMonths ?? 0)" class="form-control form-control-sm" style="width: 4rem;" title="Lookback months (0 = all records)" />
+                                        <span class="small text-nowrap">mo</span>
+                                        <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Apply</button>
+                                    </form>
+                                </div>
+                                @if (configured)
+                                {
+                                    <div class="d-flex justify-content-end gap-2 mt-2">
+                                        <form method="post" asp-page-handler="RunFast" class="d-inline">
+                                            <input type="hidden" name="profileId" value="@p.Id" />
+                                            <button type="submit" class="btn btn-sm btn-outline-success">Run fast sync now</button>
+                                        </form>
+                                        <form method="post" asp-page-handler="RunFull" class="d-inline">
+                                            <input type="hidden" name="profileId" value="@p.Id" />
+                                            <button type="submit" class="btn btn-sm btn-outline-primary" onclick="return confirm('A full sync scans the configured lookback window and may take a long time. Continue?');">Run full sync now</button>
+                                        </form>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="d-flex gap-2 mt-2">
+                                        @if (mappingStatus != ConfigurationStatus.Complete)
                                         {
-                                            <option value="@option.Minutes" selected="@(option.Minutes == p.PollingIntervalMinutes)">@option.Label</option>
+                                            <a class="btn btn-sm btn-outline-primary" asp-page="/Mapping">Configure mapping</a>
                                         }
-                                    </select>
-                                    <label class="form-label mb-0 small text-nowrap">looking back</label>
-                                    <input type="number" name="days" min="1" max="3650" value="@p.SyncWindowDays" class="form-control form-control-sm" style="width: 5rem;" />
-                                    <span class="small text-nowrap">day(s)</span>
-                                    <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Apply</button>
-                                </form>
+                                        @if (initialStatus != ConfigurationStatus.Complete)
+                                        {
+                                            <a class="btn btn-sm btn-outline-primary" asp-page="/MatchReview">Confirm initial match</a>
+                                        }
+                                    </div>
+                                }
                             </div>
                         </li>
                     }
@@ -101,7 +147,7 @@
         </div>
     </div>
     <div class="col-md-4">
-        <div class="card h-100">
+        <div class="card h-100 shadow-sm">
             <div class="card-body">
                 <h5 class="card-title">Queue</h5>
                 <p class="card-text">Pending: <strong>@Model.PendingJobs</strong></p>
@@ -124,7 +170,7 @@
     </div>
 </div>
 
-<div class="card mt-4" id="activity-card">
+<div class="card mt-4 shadow-sm" id="activity-card">
     <div class="card-body">
         <div class="d-flex justify-content-between align-items-center">
             <h5 class="card-title mb-0">
@@ -133,8 +179,10 @@
             </h5>
             <small class="text-muted" id="activity-elapsed">@(Model.Activity.Running ? Model.Activity.Elapsed : "")</small>
         </div>
-        <p class="mb-1 mt-2"><strong id="activity-phase">@Model.Activity.Phase</strong> <span id="activity-profile" class="text-muted">@(Model.Activity.ProfileId == null ? "" : $"({Model.Activity.ProfileId})")</span></p>
+        <p class="mb-1 mt-2"><strong id="activity-phase">@Model.Activity.Phase</strong> <span id="activity-profile" class="text-muted">@(Model.Activity.ProfileId == null ? "" : $"({RecordGroupDisplay.GetName(Model.Activity.ProfileId)})")</span></p>
         <p class="mb-2 text-muted small" id="activity-detail">@(Model.Activity.Detail ?? Model.Activity.LastRunSummary ?? "Waiting for the next scheduled run.")</p>
+        <p class="mb-2 text-muted small" id="activity-next-run">Next fast run: @(Model.NextRunProfileId != null ? $"{RecordGroupDisplay.GetName(Model.NextRunProfileId)} " : "")@(Model.NextRun.HasValue && Model.NextRun.Value <= DateTimeOffset.Now ? "due now" : (Model.NextRun?.ToLocalTime().ToString("g") ?? "not scheduled"))</p>
+        <p class="mb-2 text-muted small" id="activity-next-full-run">Next full run: @(Model.NextFullRunProfileId != null ? $"{RecordGroupDisplay.GetName(Model.NextFullRunProfileId)} " : "")@(Model.NextFullRun.HasValue && Model.NextFullRun.Value <= DateTimeOffset.Now ? "due now" : (Model.NextFullRun?.ToLocalTime().ToString("g") ?? "not scheduled"))</p>
         <div class="progress mb-2" style="height: 0.5rem;">
             <div class="progress-bar" id="activity-bar" role="progressbar" style="width: @(Model.Activity.Total > 0 ? Model.Activity.Processed * 100 / Model.Activity.Total : 0)%"></div>
         </div>
@@ -152,7 +200,7 @@
 </div>
 <table class="table table-sm table-striped align-middle">
     <thead>
-        <tr><th>Time</th><th>Record</th><th>Profile</th><th>Action</th><th>Outcome</th><th>What happened</th></tr>
+        <tr><th>Time</th><th>Record</th><th>Record Group</th><th>Action</th><th>Outcome</th><th>What happened</th></tr>
     </thead>
     <tbody>
         @foreach (var a in Model.RecentAudit)
@@ -163,7 +211,7 @@
                     <strong>@(a.SourceDisplay ?? a.SourceId)</strong>
                     <small class="d-block text-muted">id @a.SourceId</small>
                 </td>
-                <td>@a.ProfileId</td>
+                <td>@RecordGroupDisplay.GetName(a.ProfileId)</td>
                 <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
                 <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
                 <td>
@@ -225,6 +273,15 @@
 
             poll();
             setInterval(poll, 2000);
+
+            // Disable schedule Apply buttons until a value changes.
+            document.querySelectorAll('form.schedule-form').forEach(function (form) {
+                var btn = form.querySelector('button[type="submit"]');
+                if (btn) btn.disabled = true;
+                form.addEventListener('input', function () {
+                    if (btn) btn.disabled = false;
+                });
+            });
         })();
     </script>
 }

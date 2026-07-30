@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Html;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
@@ -20,14 +21,27 @@ public class MappingModel : PageModel
     private readonly IGallagherConnector _gallagher;
     private readonly IMemoryCache _cache;
     private readonly IConfigurationStatusService _statusService;
+    private readonly ILogger<MappingModel> _logger;
 
-    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache, IConfigurationStatusService statusService)
+    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache, IConfigurationStatusService statusService, ILogger<MappingModel> logger)
     {
         _db = db;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _cache = cache;
         _statusService = statusService;
+        _logger = logger;
+    }
+
+    public override async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context, PageHandlerExecutionDelegate next)
+    {
+        var status = await _statusService.GetOverallStateAsync(false, context.HttpContext.RequestAborted);
+        if (status.ConnectorSettings != ConfigurationStatus.Complete)
+        {
+            context.Result = new RedirectToPageResult("/Setup");
+            return;
+        }
+        await next();
     }
 
     [BindProperty(SupportsGet = true)]
@@ -88,6 +102,8 @@ public class MappingModel : PageModel
     [BindProperty]
     public string? LoadRequestId { get; set; }
 
+    public bool AutoLoad { get; set; }
+
     public async Task OnGetAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
@@ -98,6 +114,14 @@ public class MappingModel : PageModel
         await LoadProfilesAsync(ct);
         var profile = await LoadProfileAsync();
         FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
+
+        var cacheKey = GetSampleCacheKey();
+        if (!_cache.TryGetValue(cacheKey, out MappingSampleCache? cached) || cached == null)
+        {
+            AutoLoad = true;
+            LoadRequestId = Guid.NewGuid().ToString("N");
+            SetLoadStatus(LoadRequestId, 1, "Requesting OnLocation and Gallagher field data…");
+        }
         LoadCachedSamples();
     }
 
@@ -127,32 +151,60 @@ public class MappingModel : PageModel
             return Page();
         }
 
+        _logger.LogDebug("OnPostSaveAsync: received {Count} field maps", FieldMaps.Count);
+        for (int mi = 0; mi < FieldMaps.Count; mi++)
+        {
+            var map = FieldMaps[mi];
+            _logger.LogDebug("Map[{Index}] Source={Source} Target={Target} Transform={Transform} Rules={Rules}", mi, map.Source, map.Target, map.Transform, map.Rules?.Count ?? 0);
+            if (map.Rules != null)
+            {
+                for (int ri = 0; ri < map.Rules.Count; ri++)
+                {
+                    var rule = map.Rules[ri];
+                    _logger.LogDebug("  Rule[{Index}] Source={Source} Op={Operator} Value={Value} IsSource={ValueIsSource}", ri, rule.Source, rule.Operator, rule.Value, rule.ValueIsSource);
+                }
+            }
+        }
+        var ruleKeys = Request.Form.Keys.Where(k => k.Contains(".Rules[")).ToList();
+        _logger.LogDebug("Rule-related form keys ({Count}): {Keys}", ruleKeys.Count, string.Join(", ", ruleKeys));
+        var sourceValues = Request.Form
+            .Where(kvp => kvp.Key.Contains(".Rules[") && kvp.Key.EndsWith(".Source"))
+            .Select(kvp => $"{kvp.Key}='{kvp.Value}'")
+            .ToList();
+        _logger.LogDebug("Rule source form values: {Values}", string.Join("; ", sourceValues));
+
         var fieldMaps = FieldMaps
             .Where(f => !string.IsNullOrWhiteSpace(f.Target)
                 && (!string.IsNullOrWhiteSpace(f.Source)
-                    || string.Equals(f.Transform, "rule-based", StringComparison.OrdinalIgnoreCase)
-                    || (f.Rules ?? new List<FieldMapRuleDto>()).Any(r => !string.IsNullOrWhiteSpace(r.Source))))
-            .Select(f => new FieldMapDto
+                    || string.Equals(f.Transform, "rule-based", StringComparison.OrdinalIgnoreCase)))
+            .Select(f =>
             {
-                Source = f.Source.Trim(),
-                Target = f.Target.Trim(),
-                Transform = (f.Rules ?? new List<FieldMapRuleDto>()).Any(r => !string.IsNullOrWhiteSpace(r.Source))
-                    ? "rule-based"
-                    : string.IsNullOrWhiteSpace(f.Transform) ? "copy" : f.Transform.Trim(),
-                RuleLogic = string.IsNullOrWhiteSpace(f.RuleLogic) ? "and" : f.RuleLogic.Trim().ToLowerInvariant(),
-                Rules = (f.Rules ?? new List<FieldMapRuleDto>())
-                    .Where(r => !string.IsNullOrWhiteSpace(r.Source))
+                var source = f.Source?.Trim() ?? string.Empty;
+                var target = f.Target.Trim();
+                var savedRules = (f.Rules ?? new List<FieldMapRuleDto>())
+                    .Where(r => !string.IsNullOrWhiteSpace(source)
+                        && (!string.IsNullOrWhiteSpace(r.Value) || !string.Equals(r.Operator, "equals", StringComparison.OrdinalIgnoreCase)))
                     .Select(r => new FieldMapRuleDto
                     {
-                        Source = r.Source.Trim(),
+                        Source = source,
                         Operator = string.IsNullOrWhiteSpace(r.Operator) ? "equals" : r.Operator.Trim().ToLowerInvariant(),
                         Value = r.Value?.Trim(),
                         ValueIsSource = r.ValueIsSource
                     })
-                    .ToList(),
-                RuleOutputSource = f.RuleOutputSource?.Trim(),
-                RuleOutputValue = f.RuleOutputValue?.Trim(),
-                RuleOutputIsNumber = f.RuleOutputIsNumber
+                    .ToList();
+                return new FieldMapDto
+                {
+                    Source = source,
+                    Target = target,
+                    Transform = string.Equals(f.Transform, "rule-based", StringComparison.OrdinalIgnoreCase) || savedRules.Any()
+                        ? "rule-based"
+                        : string.IsNullOrWhiteSpace(f.Transform) ? "copy" : f.Transform.Trim(),
+                    RuleLogic = string.IsNullOrWhiteSpace(f.RuleLogic) ? "and" : f.RuleLogic.Trim().ToLowerInvariant(),
+                    Rules = savedRules,
+                    RuleOutputSource = f.RuleOutputSource?.Trim(),
+                    RuleOutputValue = f.RuleOutputValue?.Trim(),
+                    RuleOutputIsNumber = f.RuleOutputIsNumber
+                };
             })
             .ToList();
 
@@ -238,7 +290,7 @@ public class MappingModel : PageModel
     private async Task LoadProfilesAsync(CancellationToken ct)
     {
         var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
-        ProfileOptions = profiles.Select(p => new SelectListItem(p.Id, p.Id, p.Id == SelectedProfileId)).ToList();
+        ProfileOptions = profiles.Select(p => new SelectListItem(RecordGroupDisplay.GetName(p.Id), p.Id, p.Id == SelectedProfileId)).ToList();
     }
 
     private async Task<SyncProfile?> LoadProfileAsync()
@@ -277,7 +329,7 @@ public class MappingModel : PageModel
             }
         }
 
-        while (FieldMaps.Count < 8) FieldMaps.Add(new FieldMapDto());
+        while (FieldMaps.Count < 3) FieldMaps.Add(new FieldMapDto());
         foreach (var map in FieldMaps)
             while (map.Rules.Count < 10)
                 map.Rules.Add(new FieldMapRuleDto());

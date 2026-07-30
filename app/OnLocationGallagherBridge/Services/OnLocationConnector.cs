@@ -14,6 +14,7 @@ public interface IOnLocationConnector
     Task<IReadOnlyList<JsonElement>> GetInductionsAsync(SyncBookmark bookmark, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetInductionHoldersAsync(string inductionId, SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
     Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default);
+    Task<IReadOnlyList<JsonElement>> GetRecentInductionHoldersAsync(string inductionId, int limit, CancellationToken ct = default);
     Task<InductionHolderScan> GetNewInductionHoldersAsync(string inductionId, string? afterId, DateTimeOffset completedSince, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetRecordsByIdAsync(string endpoint, IReadOnlyCollection<string> ids, CancellationToken ct = default);
     Task<string?> GetLastErrorAsync();
@@ -32,6 +33,7 @@ public class OnLocationConnector : IOnLocationConnector
     // record (10 records ~5s, 50 ~15s, 100 ~30s). Larger pages exceed the request timeout, so this
     // stays small and pages instead.
     private const int HolderPageSize = 100;
+    private const int PeriodicHolderPageSize = 10;
     private const int MaxHolderPages = 200;
     // Holder ids are assigned when the induction is issued, not when it is completed, so a learner who
     // takes a year to finish leaves a low id with a recent `completed` date. Scanning stops this many
@@ -91,18 +93,15 @@ public class OnLocationConnector : IOnLocationConnector
     public Task<IReadOnlyList<JsonElement>> GetInductionHoldersAsync(string inductionId, SyncBookmark bookmark, CancellationToken ct = default, int limit = DefaultPageSize)
         => FetchAllAsync($"induction/{inductionId}/holder", bookmark, ct, limit);
 
-    // The routine poll only wants holder records it has not seen. Two bounds apply, and both are needed:
-    //   * the highest id already processed, since ids ascend as inductions are issued; and
-    //   * a completion-date window, which caps the very first run. Without it a profile with no bookmark yet
-    //     walks the entire induction history, which at roughly 0.3s per record takes tens of minutes.
-    // A renewal that updates an existing holder record in place keeps its original id, so with a bookmark set
-    // it will not be seen. The initial match uses the descending date scan for that reason.
+    // The routine poll scans holder records by descending id and applies the completion-date window client-side,
+    // stopping after a short run of pages with no in-window records. Requesting 10 records at a time keeps the
+    // calls light while still catching older holder ids that were completed recently, because holder ids are
+    // assigned when the induction is issued, not when it is completed.
     public async Task<InductionHolderScan> GetNewInductionHoldersAsync(string inductionId, string? afterId, DateTimeOffset completedSince, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(afterId))
         {
-            // Nothing processed yet, so walk backwards from the newest record and stop once the window is
-            // exhausted rather than starting from the beginning of time.
+            // First run: seed from the date window with larger pages.
             var seeded = await GetInductionHoldersCompletedSinceAsync(inductionId, completedSince, null, ct);
             var highestSeeded = HighestId(seeded, null);
             _logger.Information("OnLocation induction {InductionId}: seeding from the {Since:yyyy-MM-dd} window, {Count} holder record(s), highest id {HighestId}",
@@ -110,48 +109,20 @@ public class OnLocationConnector : IOnLocationConnector
             return new InductionHolderScan(seeded, highestSeeded, seeded.Count);
         }
 
-        var records = new List<JsonElement>();
-        var client = await CreateClientAsync(ct);
-        var cursor = afterId;
-        var highest = afterId;
-        var pages = 0;
-        var scanned = 0;
-
-        while (!ct.IsCancellationRequested && pages < MaxHolderPages)
-        {
-            var query = new List<string> { "order=id", $"limit={HolderPageSize}" };
-            query.Add($"q=id>{Uri.EscapeDataString(cursor!)}");
-
-            var url = $"induction/{inductionId}/holder?{string.Join("&", query)}";
-            var (response, body) = await SendLoggedAsync(client, new HttpRequestMessage(HttpMethod.Get, url), ct);
-            if (!await HandleResponseAsync(response, body, ct)) break;
-
-            var page = ExtractRecords(body);
-            pages++;
-            scanned += page.Count;
-            if (page.Count == 0) break;
-
-            var inWindow = page.Where(holder => CompletedOnOrAfter(holder, completedSince)).ToList();
-            records.AddRange(inWindow);
-            highest = HighestId(page, highest);
-            _activity.AddChecked(page.Count, $"Induction {inductionId}: checked {scanned} holder record(s)");
-
-            var lastId = GetId(page[^1]);
-            // Without the equality check a server that ignored the filter would page forever.
-            if (string.IsNullOrWhiteSpace(lastId) || lastId == cursor) break;
-            cursor = lastId;
-            if (page.Count < HolderPageSize) break;
-        }
-
-        if (pages >= MaxHolderPages)
-            _logger.Warning("OnLocation induction {InductionId}: hit the {MaxHolderPages} page limit while fetching new holder records", inductionId, MaxHolderPages);
-
-        _logger.Information("OnLocation induction {InductionId}: scanned {Scanned} holder record(s) newer than id {AfterId} over {Pages} page(s), {Count} completed on or after {Since:yyyy-MM-dd}",
-            inductionId, scanned, afterId, pages, records.Count, completedSince);
-        return new InductionHolderScan(records, highest, scanned);
+        // Subsequent runs: walk the date window with small pages so older holder ids that were completed
+        // recently are not missed just because their id is lower than the last one we saw.
+        return await ScanInductionHoldersByWindowAsync(inductionId, completedSince, PeriodicHolderPageSize, null, ct);
     }
 
-    // Ids are compared numerically where possible: "9" is a later record than "10" as text but not in fact.
+    public async Task<IReadOnlyList<JsonElement>> GetRecentInductionHoldersAsync(string inductionId, int limit, CancellationToken ct = default)
+    {
+        var client = await CreateClientAsync(ct);
+        var query = $"order=-id&limit={Math.Clamp(limit, 1, MaxPageSize)}";
+        var url = $"induction/{inductionId}/holder?{query}";
+        var (response, body) = await SendLoggedAsync(client, new HttpRequestMessage(HttpMethod.Get, url), ct);
+        if (!await HandleResponseAsync(response, body, ct)) return Array.Empty<JsonElement>();
+        return ExtractRecords(body);
+    }
     private static string? HighestId(IReadOnlyList<JsonElement> records, string? current)
     {
         var highest = current;
@@ -175,10 +146,12 @@ public class OnLocationConnector : IOnLocationConnector
 
     public async Task<IReadOnlyList<JsonElement>> GetInductionHoldersCompletedSinceAsync(string inductionId, DateTimeOffset since, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default)
     {
-        // OnLocation rejects `q` filters on `completed` ("Filtering by 'completed' is not supported"),
-        // so the date is applied client-side. Every page must be scanned: a renewal updates `completed`
-        // in place, so low-id holder records routinely carry recent completion dates and the walk
-        // cannot stop the moment it sees an out-of-window record. See HolderLookaheadPages.
+        var scan = await ScanInductionHoldersByWindowAsync(inductionId, since, HolderPageSize, progress, ct);
+        return scan.Records;
+    }
+
+    private async Task<InductionHolderScan> ScanInductionHoldersByWindowAsync(string inductionId, DateTimeOffset since, int pageSize, IProgress<OnLocationFetchProgress>? progress, CancellationToken ct)
+    {
         var records = new List<JsonElement>();
         var client = await CreateClientAsync(ct);
         string? oldestId = null;
@@ -188,7 +161,7 @@ public class OnLocationConnector : IOnLocationConnector
 
         while (!ct.IsCancellationRequested && pages < MaxHolderPages)
         {
-            var query = new List<string> { "order=-id", $"limit={HolderPageSize}" };
+            var query = new List<string> { "order=-id", $"limit={Math.Clamp(pageSize, 1, MaxPageSize)}" };
             if (!string.IsNullOrWhiteSpace(oldestId)) query.Add($"q=id<{oldestId}");
 
             var url = $"induction/{inductionId}/holder?{string.Join("&", query)}";
@@ -203,9 +176,9 @@ public class OnLocationConnector : IOnLocationConnector
             var inWindow = page.Where(holder => CompletedOnOrAfter(holder, since)).ToList();
             records.AddRange(inWindow);
             _activity.AddChecked(page.Count, $"Induction {inductionId}: checked {scanned} holder record(s), {records.Count} in the window");
-            _logger.Information("OnLocation induction {InductionId} page {Page}: {PageCount} holder(s), {InWindow} completed on or after {Since:yyyy-MM-dd}, running total {Total}", inductionId, pages, page.Count, inWindow.Count, since, records.Count);
+            _logger.Information("OnLocation induction {InductionId} page {Page}: {PageCount} holder(s), {InWindow} completed on or after {Since:yyyy-MM-dd}, running total {Total}",
+                inductionId, pages, page.Count, inWindow.Count, since, records.Count);
 
-            // Report progress assuming ~10 pages per induction so the bar moves with every page.
             var percent = Math.Min(100, pages * 100 / 10);
             progress?.Report(new OnLocationFetchProgress(percent, $"{records.Count} record(s) found ({scanned} searched)..."));
 
@@ -217,7 +190,7 @@ public class OnLocationConnector : IOnLocationConnector
             }
 
             var nextId = GetId(page[^1]);
-            if (page.Count < HolderPageSize || string.IsNullOrWhiteSpace(nextId) || nextId == oldestId) break;
+            if (page.Count < pageSize || string.IsNullOrWhiteSpace(nextId) || nextId == oldestId) break;
             oldestId = nextId;
         }
 
@@ -225,7 +198,7 @@ public class OnLocationConnector : IOnLocationConnector
             _logger.Warning("OnLocation induction {InductionId}: hit the {MaxHolderPages} page scan limit; results may be incomplete", inductionId, MaxHolderPages);
 
         _logger.Information("OnLocation induction {InductionId}: scanned {Scanned} holder records over {Pages} page(s), {Count} completed on or after {Since:yyyy-MM-dd}", inductionId, scanned, pages, records.Count, since);
-        return records;
+        return new InductionHolderScan(records, HighestId(records, null), scanned);
     }
 
     public async Task<IReadOnlyList<JsonElement>> GetRecordsByIdAsync(string endpoint, IReadOnlyCollection<string> ids, CancellationToken ct = default)

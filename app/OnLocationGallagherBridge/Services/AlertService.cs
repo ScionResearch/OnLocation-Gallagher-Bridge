@@ -24,7 +24,7 @@ public class AlertService : IAlertService
     public async Task SendAlertAsync(string subject, string body)
     {
         var smtp = _config.GetConfig().Smtp;
-        if (!smtp.Enabled || string.IsNullOrEmpty(smtp.Host)) return;
+        if (!smtp.Enabled || string.IsNullOrEmpty(smtp.Host) || string.IsNullOrWhiteSpace(smtp.From)) return;
         try
         {
             var message = new MimeMessage();
@@ -37,7 +37,7 @@ public class AlertService : IAlertService
             using var client = new SmtpClient();
             await client.ConnectAsync(smtp.Host, smtp.Port, smtp.EnableSsl ? MailKit.Security.SecureSocketOptions.StartTls : MailKit.Security.SecureSocketOptions.Auto);
             if (!string.IsNullOrEmpty(smtp.Username))
-                await client.AuthenticateAsync(smtp.Username, smtp.Password);
+                await client.AuthenticateAsync(smtp.Username, smtp.Password ?? string.Empty);
             await client.SendAsync(message);
             await client.DisconnectAsync(true);
         }

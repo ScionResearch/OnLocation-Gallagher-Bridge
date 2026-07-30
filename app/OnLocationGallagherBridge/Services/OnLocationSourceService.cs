@@ -6,7 +6,7 @@ namespace OnLocationGallagherBridge.Services;
 
 public interface IOnLocationSourceService
 {
-    Task<IReadOnlyList<JsonElement>> GetRecordsAsync(SyncProfile profile, SyncBookmark bookmark, CancellationToken ct = default);
+    Task<IReadOnlyList<JsonElement>> GetRecordsAsync(SyncProfile profile, SyncBookmark bookmark, bool fullSync = false, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetInitialMatchRecordsAsync(SyncProfile profile, DateTimeOffset completedSince, IProgress<OnLocationFetchProgress>? progress = null, CancellationToken ct = default);
 }
 
@@ -25,7 +25,7 @@ public class OnLocationSourceService : IOnLocationSourceService
         _logger = logger ?? Serilog.Log.Logger.ForContext<OnLocationSourceService>();
     }
 
-    public async Task<IReadOnlyList<JsonElement>> GetRecordsAsync(SyncProfile profile, SyncBookmark bookmark, CancellationToken ct = default)
+    public async Task<IReadOnlyList<JsonElement>> GetRecordsAsync(SyncProfile profile, SyncBookmark bookmark, bool fullSync = false, CancellationToken ct = default)
     {
         var inductionIds = GetSelectedInductionIds(profile);
         if (inductionIds.Count == 0)
@@ -39,32 +39,51 @@ public class OnLocationSourceService : IOnLocationSourceService
             };
         }
 
-        // Only holder records created since the last poll matter, so the highest id seen per induction is kept
-        // and used as the filter. This replaces walking the whole member list on every run, which was both slow
-        // and the reason unrelated people kept arriving in the manual match queue.
         var personIdField = GetPersonIdField(profile);
         var cursors = ParseCursors(bookmark.InductionCursorsJson);
         var attemptsByInduction = new Dictionary<string, Dictionary<string, JsonElement>>(StringComparer.OrdinalIgnoreCase);
-        var completedSince = DateTimeOffset.UtcNow.AddDays(-Math.Max(1, profile.SyncWindowDays));
 
-        _logger.Information("Profile {Profile}: scanning {Count} induction(s) for records completed on or after {Since:yyyy-MM-dd} ({Days} day window)",
-            profile.Id, inductionIds.Count, completedSince, profile.SyncWindowDays);
-
-        var index = 0;
-        foreach (var inductionId in inductionIds)
+        if (fullSync)
         {
-            index++;
-            cursors.TryGetValue(inductionId, out var afterId);
-            _activity.SetPhase($"Scanning induction {index} of {inductionIds.Count}", $"Induction {inductionId} from id {afterId ?? "(window start)"}");
+            var lookbackMonths = profile.FullSyncLookbackMonths;
+            var completedSince = lookbackMonths.HasValue && lookbackMonths.Value > 0
+                ? DateTimeOffset.UtcNow.AddMonths(-lookbackMonths.Value)
+                : DateTimeOffset.MinValue;
 
-            var scan = await _onLocation.GetNewInductionHoldersAsync(inductionId, afterId, completedSince, ct);
+            _logger.Information("Profile {Profile}: full sync scanning {Count} induction(s) for records completed on or after {Since} ({Lookback} month lookback)",
+                profile.Id, inductionIds.Count, completedSince, lookbackMonths.HasValue ? lookbackMonths.Value.ToString() : "all");
 
-            // The bookmark advances past everything seen, including records the window excluded, otherwise
-            // they would be re-read on every poll for ever.
-            if (!string.IsNullOrWhiteSpace(scan.HighestId)) cursors[inductionId] = scan.HighestId!;
-            if (scan.Records.Count == 0) continue;
+            var index = 0;
+            foreach (var inductionId in inductionIds)
+            {
+                index++;
+                cursors.TryGetValue(inductionId, out var afterId);
+                _activity.SetPhase($"Full sync induction {index} of {inductionIds.Count}", $"Induction {inductionId} window scan");
 
-            attemptsByInduction[inductionId] = LatestAttemptPerPerson(scan.Records, personIdField);
+                var scan = await _onLocation.GetNewInductionHoldersAsync(inductionId, afterId, completedSince, ct);
+
+                if (!string.IsNullOrWhiteSpace(scan.HighestId)) cursors[inductionId] = scan.HighestId!;
+                if (scan.Records.Count == 0) continue;
+
+                attemptsByInduction[inductionId] = LatestAttemptPerPerson(scan.Records, personIdField);
+            }
+        }
+        else
+        {
+            _logger.Information("Profile {Profile}: fast sync checking the latest 10 holder records for each of {Count} induction(s)",
+                profile.Id, inductionIds.Count);
+
+            var index = 0;
+            foreach (var inductionId in inductionIds)
+            {
+                index++;
+                _activity.SetPhase($"Fast sync induction {index} of {inductionIds.Count}", $"Induction {inductionId} latest records");
+
+                var records = await _onLocation.GetRecentInductionHoldersAsync(inductionId, 10, ct);
+                if (records.Count == 0) continue;
+
+                attemptsByInduction[inductionId] = LatestAttemptPerPerson(records, personIdField);
+            }
         }
 
         bookmark.InductionCursorsJson = JsonSerializer.Serialize(cursors);

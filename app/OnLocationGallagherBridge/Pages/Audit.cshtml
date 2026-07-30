@@ -9,12 +9,12 @@
 
 <form method="get" class="row g-2 align-items-end mb-3">
     <div class="col-md-2">
-        <label class="form-label">Profile</label>
+        <label class="form-label">Record Group</label>
         <select class="form-select" asp-for="ProfileId">
             <option value="">All</option>
             @foreach (var id in Model.ProfileIds)
             {
-                <option value="@id">@id</option>
+                <option value="@id">@RecordGroupDisplay.GetName(id)</option>
             }
         </select>
     </div>
@@ -58,7 +58,7 @@
         <tr>
             <th>Time</th>
             <th>Record</th>
-            <th>Profile</th>
+            <th>Record Group</th>
             <th>Action</th>
             <th>Outcome</th>
             <th>What happened</th>
@@ -76,7 +76,7 @@
                     <strong>@(a.SourceDisplay ?? a.SourceId)</strong>
                     <small class="d-block text-muted">id @a.SourceId</small>
                 </td>
-                <td>@a.ProfileId</td>
+                <td>@RecordGroupDisplay.GetName(a.ProfileId)</td>
                 <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
                 <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
                 <td>

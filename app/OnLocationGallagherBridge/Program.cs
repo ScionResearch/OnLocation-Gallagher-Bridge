@@ -111,6 +111,11 @@ static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
     await EnsureColumnAsync(db, "AuditLogs", "DurationMs", "INTEGER NOT NULL DEFAULT 0");
     await EnsureColumnAsync(db, "SyncBookmarks", "InductionCursorsJson", "TEXT NOT NULL DEFAULT '{}'");
     await EnsureColumnAsync(db, "SyncProfiles", "SyncWindowDays", "INTEGER NOT NULL DEFAULT 7");
+    await EnsureColumnAsync(db, "SyncProfiles", "FastSyncIntervalMinutes", "INTEGER NOT NULL DEFAULT 5");
+    await EnsureColumnAsync(db, "SyncProfiles", "FullSyncIntervalDays", "INTEGER NOT NULL DEFAULT 1");
+    await EnsureColumnAsync(db, "SyncProfiles", "FullSyncTimeOfDayMinutes", "INTEGER NOT NULL DEFAULT 60");
+    await EnsureColumnAsync(db, "SyncProfiles", "FullSyncLookbackMonths", "INTEGER NULL");
+    await EnsureColumnAsync(db, "SyncProfiles", "NextFullRun", "TEXT NULL");
     await EnsureColumnAsync(db, "SyncProfiles", "BridgeMessageTarget", "TEXT NOT NULL DEFAULT ''");
     await EnsureColumnAsync(db, "SyncProfiles", "DefaultUnmatchedAction", "INTEGER NOT NULL DEFAULT 0");
     await EnsureColumnAsync(db, "ManualMatchQueues", "UpdatedAt", "TEXT NOT NULL DEFAULT ''");
@@ -150,7 +155,7 @@ static void SeedDefaults(BridgeDbContext db)
     db.SyncProfiles.AddRange(
         new SyncProfile
         {
-            Id = "employees",
+            Id = "Staff",
             EntityType = "Staff",
             Enabled = false,
             PollingIntervalMinutes = 60,
@@ -160,7 +165,7 @@ static void SeedDefaults(BridgeDbContext db)
         },
         new SyncProfile
         {
-            Id = "contractor-members",
+            Id = "Contractors",
             EntityType = "SpMember",
             Enabled = false,
             PollingIntervalMinutes = 60,

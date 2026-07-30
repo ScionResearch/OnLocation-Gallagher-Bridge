@@ -18,14 +18,16 @@
 <partial name="_StatusBanner" model='new StatusBannerModel("Field Mapping", Model.FieldMappingStatus)' />
 
 <form method="post">
+    @Html.AntiForgeryToken()
     <div class="mb-3">
-        <label class="form-label">Sync Profile</label>
+        <label class="form-label">Record Group</label>
         <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
     </div>
     <input type="hidden" asp-for="LoadRequestId" id="loadRequestId" />
-    <button type="submit" class="btn btn-secondary" formaction="/Mapping?handler=Load" id="loadFieldsButton">Get OnLocation &amp; Gallagher Fields</button>
-    <button type="submit" class="btn btn-primary" formaction="/Mapping?handler=Save" id="saveMappingButton">Save mapping</button>
-    <div id="loadFieldsProgress" class="card border-primary mt-3 d-none" role="status" aria-live="polite">
+    <button type="submit" class="btn btn-secondary" formaction="/Mapping?handler=Load" id="loadFieldsButton" @(Model.AutoLoad ? "disabled" : "")>Refresh Remote Fields</button>
+    <button type="submit" class="btn btn-primary" formaction="/Mapping?handler=Save" id="saveMappingButton" @(Model.AutoLoad ? "disabled" : "")>Save mapping</button>
+    <a class="btn @(Model.FieldMappingStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/MatchReview">Next step</a>
+    <div id="loadFieldsProgress" class="card border-primary shadow-sm mt-3 @(Model.AutoLoad ? "" : "d-none")" role="status" aria-live="polite">
         <div class="card-body py-3">
             <div class="d-flex align-items-center gap-2 mb-2">
                 <div id="loadFieldsSpinner" class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
@@ -43,6 +45,8 @@
             <div class="small text-muted">This can take a little while. Keep this page open while the field data is retrieved.</div>
         </div>
     </div>
+
+<hr class="my-4" />
 
 <h4 class="mt-4">Defaults for new cardholders</h4>
 <p>Applied only when the bridge creates a cardholder. Existing cardholders keep the division and access groups they already have.</p>
@@ -90,8 +94,10 @@
 </div>
 @if (!Model.DivisionOptions.Any())
 {
-    <div class="alert alert-warning py-2 small">Divisions and access groups have not been retrieved yet. Click <strong>Get OnLocation &amp; Gallagher Fields</strong> to populate these lists.</div>
+    <div class="alert alert-warning py-2 small">Divisions and access groups have not been retrieved yet. Click <strong>Refresh Remote Fields</strong> to populate these lists.</div>
 }
+
+<hr class="my-4" />
 
 <h4 class="mt-4">Bridge sync message</h4>
 <p>Choose where to record a short timestamped message each time the bridge creates or updates a cardholder. Select <em>none</em> to leave cardholder fields untouched.</p>
@@ -126,6 +132,8 @@
         <div class="form-text">The description field may be visible to Gallagher operators, so a personal data field is usually a safer choice.</div>
     </div>
 </div>
+
+<hr class="my-4" />
 
 @if (Model.SourceFields.Any() || Model.InductionFieldGroups.Any() || Model.GallagherFields.Any() || Model.GallagherPersonalDataFieldNames.Any() || Model.GallagherCompetencyNames.Any())
 {
@@ -222,6 +230,8 @@
     }
 }
 
+<hr class="my-4" />
+
 <h4 class="mt-4">Field maps</h4>
 <p>Map an OnLocation source field to a Gallagher target field. Choose <strong>Rule based</strong> to set the target only when conditions match.</p>
 <table class="table table-sm" id="fieldMapsTable">
@@ -241,7 +251,7 @@
                         }
                         @if (Model.SourceFields.Any())
                         {
-                            <optgroup label="Profile record">
+                            <optgroup label="Record group">
                                 @foreach (var f in Model.SourceFields)
                                 {
                                     <option value="@f" data-low-priority="@(!Model.IsPriorityProfileField(f))">@f</option>
@@ -307,91 +317,122 @@
                 </td>
             </tr>
             <tr class="rule-section @(!isRuleBased ? "d-none" : "")" data-map-index="@i">
-                <td colspan="3" class="py-3 bg-light">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label">Rule logic</label>
-                            <select class="form-select form-select-sm" asp-for="FieldMaps[i].RuleLogic">
-                                <option value="and">All rules must match (AND)</option>
-                                <option value="or">Any rule can match (OR)</option>
-                            </select>
-                        </div>
-                        <div class="col-md-8">
-                            <label class="form-label">Output value when rules match</label>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input output-type" type="radio" name="outputType_@i" id="outputTypeConst_@i" value="constant" checked="@(string.IsNullOrWhiteSpace(map.RuleOutputSource))" />
-                                <label class="form-check-label" for="outputTypeConst_@i">Constant</label>
-                            </div>
-                            <div class="form-check form-check-inline">
-                                <input class="form-check-input output-type" type="radio" name="outputType_@i" id="outputTypeSource_@i" value="source" checked="@(!string.IsNullOrWhiteSpace(map.RuleOutputSource))" />
-                                <label class="form-check-label" for="outputTypeSource_@i">Source field</label>
-                            </div>
-                            <div class="output-constant mt-2 @(string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")">
-                                <input class="form-control form-control-sm" asp-for="FieldMaps[i].RuleOutputValue" placeholder="Value to write" />
-                                <div class="form-check mt-1">
-                                    <input class="form-check-input" type="checkbox" asp-for="FieldMaps[i].RuleOutputIsNumber" />
-                                    <label class="form-check-label" asp-for="FieldMaps[i].RuleOutputIsNumber">Value is a number</label>
+                <td colspan="3" class="p-0">
+                    <div class="card shadow-sm bg-light border-0">
+                        <div class="card-body p-3">
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-3">
+                                    <label class="form-label small fw-semibold">Rule logic</label>
+                                    <select class="form-select form-select-sm rule-logic-select" asp-for="FieldMaps[i].RuleLogic">
+                                        <option value="and">All rules must match (AND)</option>
+                                        <option value="or">Any rule can match (OR)</option>
+                                    </select>
                                 </div>
                             </div>
-                            <div class="output-source mt-2 @(!string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")">
-                                <select class="form-select form-select-sm" asp-for="FieldMaps[i].RuleOutputSource">
-                                    @Model.RenderSourceFieldOptions(map.RuleOutputSource)
-                                </select>
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0 small fw-semibold">Rules</label>
+                                <small class="text-muted rule-limit @(map.Rules.Count(r => !string.IsNullOrWhiteSpace(r.Value) || !string.Equals(r.Operator, "equals", StringComparison.OrdinalIgnoreCase)) >= 10 ? "" : "d-none")">Maximum 10 rules reached.</small>
+                            </div>
+                            <div class="rule-rows">
+                                @for (int j = 0; j < map.Rules.Count; j++)
+                                {
+                                    var rule = map.Rules[j];
+                                    var ruleVisible = !string.IsNullOrWhiteSpace(rule.Value)
+                                        || !string.Equals(rule.Operator, "equals", StringComparison.OrdinalIgnoreCase);
+                                    var valueIsSource = rule.ValueIsSource;
+                                    var ruleLogicLabel = string.Equals(map.RuleLogic, "or", StringComparison.OrdinalIgnoreCase) ? "OR" : "AND";
+                                    <div class="row g-2 align-items-center rule-row @(ruleVisible ? "" : "d-none") mb-2 pb-2 border-bottom" data-rule-index="@j">
+                                        <div class="col-auto">
+                                            <span class="fw-bold small">@(j + 1)</span>
+                                        </div>
+                                        <div class="col-auto small text-muted">
+                                            @if (j == 0)
+                                            {
+                                                <span>IF</span>
+                                            }
+                                            else
+                                            {
+                                                <span><span class="rule-prefix-text">@ruleLogicLabel</span> IF</span>
+                                            }
+                                        </div>
+                                        <div class="col-auto">
+                                            <div class="text-break small fw-medium rule-source-display">@map.Source</div>
+                                            <input type="hidden" name="FieldMaps[@i].Rules[@j].Source" value="@map.Source" />
+                                        </div>
+                                        <div class="col-md-2 col-6">
+                                            <select class="form-select form-select-sm rule-operator" name="FieldMaps[@i].Rules[@j].Operator" id="FieldMaps_@(i)__Rules_@(j)__Operator">
+                                                <!option value="equals" @(string.Equals(rule.Operator, "equals", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>equals</!option>
+                                                <!option value="not-equals" @(string.Equals(rule.Operator, "not-equals", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>does not equal</!option>
+                                                <!option value="greater-than" @(string.Equals(rule.Operator, "greater-than", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>greater than</!option>
+                                                <!option value="less-than" @(string.Equals(rule.Operator, "less-than", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>less than</!option>
+                                                <!option value="contains" @(string.Equals(rule.Operator, "contains", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>contains</!option>
+                                                <!option value="not-contains" @(string.Equals(rule.Operator, "not-contains", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>does not contain</!option>
+                                                <!option value="exists" @(string.Equals(rule.Operator, "exists", StringComparison.OrdinalIgnoreCase) ? "selected" : "")>exists</!option>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-3 col-6 rule-value-cell">
+                                            <input type="hidden" name="FieldMaps[@i].Rules[@j].Value" class="rule-value-hidden" value="@rule.Value" />
+                                            <input type="text" class="form-control form-control-sm rule-value-constant @(valueIsSource ? "d-none" : "")" placeholder="Value" value="@rule.Value" />
+                                            <select class="form-select form-select-sm rule-value-source @(!valueIsSource ? "d-none" : "")" id="FieldMaps_@(i)__Rules_@(j)__ValueSource">
+                                                @Model.RenderSourceFieldOptions(rule.Value)
+                                            </select>
+                                        </div>
+                                        <div class="col-auto rule-value-toggle">
+                                            <div class="form-check form-check-inline mb-0">
+                                                <input class="form-check-input rule-value-issource" type="checkbox" name="FieldMaps[@i].Rules[@j].ValueIsSource" id="FieldMaps_@(i)__Rules_@(j)__ValueIsSource" value="true" @(rule.ValueIsSource ? "checked" : "") />
+                                                <label class="form-check-label small" for="FieldMaps_@(i)__Rules_@(j)__ValueIsSource">Value is a source field</label>
+                                            </div>
+                                        </div>
+                                        <div class="col-auto ms-auto">
+                                            <button type="button" class="btn btn-sm btn-outline-danger remove-rule">Remove</button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                            <button type="button" class="btn btn-sm btn-outline-primary add-rule mt-2">Add rule</button>
+
+                            <div class="mt-3 pt-3 border-top">
+                                <label class="form-label small fw-semibold mb-2">Output</label>
+                                <div class="row g-2 align-items-center">
+                                    <div class="col-auto small text-muted">Set</div>
+                                    <div class="col-auto">
+                                        <span class="text-break small fw-medium">@map.Target</span>
+                                    </div>
+                                    <div class="col-auto small text-muted">to</div>
+                                    <div class="col-md-3 col-6">
+                                        <input type="text" class="form-control form-control-sm output-constant @(string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")" name="FieldMaps[@i].RuleOutputValue" id="FieldMaps_@(i)__RuleOutputValue" value="@map.RuleOutputValue" placeholder="Value" />
+                                        <select class="form-select form-select-sm output-source @(!string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")" name="FieldMaps[@i].RuleOutputSource" id="FieldMaps_@(i)__RuleOutputSource">
+                                            @Model.RenderSourceFieldOptions(map.RuleOutputSource)
+                                        </select>
+                                    </div>
+                                    <div class="col-auto">
+                                        <div class="form-check form-check-inline mb-0">
+                                            <input class="form-check-input output-is-source" type="checkbox" id="FieldMaps_@(i)__RuleOutputIsSource" @(string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "checked") />
+                                            <label class="form-check-label small" for="FieldMaps_@(i)__RuleOutputIsSource">Value is a source field</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-auto output-is-number-wrapper @(string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")">
+                                        <div class="form-check form-check-inline mb-0">
+                                            <input class="form-check-input output-is-number" type="checkbox" name="FieldMaps[@i].RuleOutputIsNumber" id="FieldMaps_@(i)__RuleOutputIsNumber" value="true" @(map.RuleOutputIsNumber ? "checked" : "") />
+                                            <label class="form-check-label small" for="FieldMaps_@(i)__RuleOutputIsNumber">Value is a number</label>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                    <label class="form-label mt-3">Rules</label>
-                    <table class="table table-sm table-borderless">
-                        <tbody class="rule-rows">
-                            @for (int j = 0; j < map.Rules.Count; j++)
-                            {
-                                var rule = map.Rules[j];
-                                var ruleVisible = !string.IsNullOrWhiteSpace(rule.Source);
-                                var valueIsSource = rule.ValueIsSource;
-                                <tr class="rule-row @(ruleVisible ? "" : "d-none")" data-rule-index="@j">
-                                    <td>
-                                        <select class="form-select form-select-sm rule-source" asp-for="FieldMaps[i].Rules[j].Source">
-                                            @Model.RenderSourceFieldOptions(rule.Source)
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <select class="form-select form-select-sm rule-operator" asp-for="FieldMaps[i].Rules[j].Operator">
-                                            <option value="equals">equals</option>
-                                            <option value="not-equals">does not equal</option>
-                                            <option value="greater-than">greater than</option>
-                                            <option value="less-than">less than</option>
-                                            <option value="contains">contains</option>
-                                            <option value="not-contains">does not contain</option>
-                                            <option value="exists">exists</option>
-                                        </select>
-                                    </td>
-                                    <td class="rule-value-cell">
-                                        <input type="hidden" asp-for="FieldMaps[i].Rules[j].Value" class="rule-value-hidden" />
-                                        <input type="text" class="form-control form-control-sm rule-value-constant @(valueIsSource ? "d-none" : "")" placeholder="Value" value="@rule.Value" />
-                                        <select class="form-select form-select-sm rule-value-source @(!valueIsSource ? "d-none" : "")">
-                                            @Model.RenderSourceFieldOptions(rule.Value)
-                                        </select>
-                                    </td>
-                                    <td>
-                                        <div class="form-check">
-                                            <input class="form-check-input rule-value-issource" type="checkbox" asp-for="FieldMaps[i].Rules[j].ValueIsSource" />
-                                            <label class="form-check-label" asp-for="FieldMaps[i].Rules[j].ValueIsSource">Use source field</label>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <button type="button" class="btn btn-sm btn-outline-danger remove-rule">Remove</button>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                    <button type="button" class="btn btn-sm btn-outline-primary add-rule">Add rule</button>
-                    <small class="text-muted ms-2 rule-limit @(map.Rules.Count(r => !string.IsNullOrWhiteSpace(r.Source)) >= 10 ? "" : "d-none")">Maximum 10 rules reached.</small>
                 </td>
             </tr>
         }
     </tbody>
 </table>
+
+<div class="d-flex align-items-center gap-2 mb-4">
+    <button type="button" class="btn btn-outline-secondary btn-sm" id="addFieldMap">Add field map</button>
+    <small class="text-muted" id="fieldMapLimit">Maximum 30 field maps.</small>
+</div>
+
+<hr class="my-4" />
 
 <h4 class="mt-4">Primary match</h4>
 <p>The first rule used to identify the same person across OnLocation and Gallagher. Select more than one field on either side to compare a combined value, for example OnLocation <code>name</code> against Gallagher <code>firstName</code> and <code>lastName</code>.</p>
@@ -405,7 +446,7 @@
                     {
                         <option value="@value">@value</option>
                     }
-                    <optgroup label="Profile record">
+                    <optgroup label="Record group">
                         @foreach (var field in Model.SourceFields)
                         {
                             <option value="@field" data-low-priority="@(!Model.IsPriorityProfileField(field))">@field</option>
@@ -451,6 +492,8 @@
         </tr>
     </tbody>
 </table>
+
+<hr class="my-4" />
 
 <h4 class="mt-4">Fallback match rules</h4>
 <p>When the primary match or existing ID mapping does not find a result, try these rules in priority order. Hold Ctrl (or Cmd) to select several fields on either side; multiple fields are joined with a space before comparing, so a single combined OnLocation field can be matched against separate Gallagher fields.</p>
@@ -546,29 +589,81 @@
                 badge.textContent = step < loadStatus.step ? '✓' : String(step);
             });
         };
-        form.addEventListener('submit', event => {
-            if (event.submitter !== loadButton) return;
-            event.preventDefault();
-            requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+        const pollStatus = async () => {
+            try {
+                const response = await fetch(`/Mapping?handler=LoadStatus&requestId=${encodeURIComponent(requestId.value)}`);
+                if (!response.ok) return;
+                const loadStatus = await response.json();
+                if (loadStatus) setStage(loadStatus);
+            } catch {
+            }
+        };
+
+        const startRemoteLoad = async () => {
             loadButton.disabled = true;
             saveButton.disabled = true;
             progress.classList.remove('d-none');
-            const pollStatus = async () => {
-                try {
-                    const response = await fetch(`/Mapping?handler=LoadStatus&requestId=${encodeURIComponent(requestId.value)}`);
-                    if (!response.ok) return;
-                    const loadStatus = await response.json();
-                    if (loadStatus) setStage(loadStatus);
-                } catch {
-                }
-            };
+            const token = form.querySelector('input[name="__RequestVerificationToken"]')?.value;
+            const formData = new FormData(form);
+            formData.set('handler', 'Load');
+            formData.set('LoadRequestId', requestId.value);
+            const timer = window.setInterval(pollStatus, 750);
             pollStatus();
-            window.setInterval(pollStatus, 750);
-            window.setTimeout(() => {
-                form.action = loadButton.formAction;
-                form.submit();
-            }, 50);
+            let loadOk = false;
+            try {
+                const response = await fetch('/Mapping?handler=Load', { method: 'POST', body: formData, headers: token ? { 'RequestVerificationToken': token } : {} });
+                if (!response.ok) throw new Error(`Server returned ${response.status}`);
+                loadOk = true;
+            } catch (err) {
+                spinner.classList.add('d-none');
+                complete.classList.remove('d-none');
+                complete.classList.add('text-bg-danger');
+                complete.textContent = '!';
+                status.textContent = 'Remote field load failed: ' + err;
+                loadButton.disabled = false;
+                saveButton.disabled = false;
+            } finally {
+                window.clearInterval(timer);
+            }
+            if (!loadOk) return;
+            const finalResponse = await fetch(`/Mapping?handler=LoadStatus&requestId=${encodeURIComponent(requestId.value)}`);
+            if (finalResponse.ok) {
+                const final = await finalResponse.json();
+                if (final) setStage(final);
+                if (final && final.isSuccess !== false) {
+                    window.location.reload();
+                }
+            }
+        };
+
+        if (requestId.value) {
+            startRemoteLoad();
+        }
+
+        form.addEventListener('submit', event => {
+            if (event.submitter !== loadButton) return;
+            event.preventDefault();
+            if (!requestId.value) requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+            startRemoteLoad();
         });
+
+        const updateSaveButton = () => {
+            let hasValidMap = false;
+            document.querySelectorAll('#fieldMapsTable tbody tr.field-map-row').forEach(row => {
+                const source = row.querySelector('select[name^="FieldMaps["][name$=".Source"]')?.value?.trim() ?? '';
+                const target = row.querySelector('select[name^="FieldMaps["][name$=".Target"]')?.value?.trim() ?? '';
+                const transform = row.querySelector('select[name^="FieldMaps["][name$=".Transform"]')?.value?.trim() ?? '';
+                if (target && (source || transform === 'rule-based')) hasValidMap = true;
+            });
+            const primarySource = Array.from(document.querySelector('select[name="PrimaryMatch.SourceFieldList"]')?.selectedOptions || []).some(o => o.value);
+            const primaryTarget = Array.from(document.querySelector('select[name="PrimaryMatch.TargetFieldList"]')?.selectedOptions || []).some(o => o.value);
+            saveButton.disabled = !(hasValidMap && primarySource && primaryTarget);
+        };
+
+        document.getElementById('fieldMapsTable')?.addEventListener('change', updateSaveButton);
+        document.querySelector('select[name="PrimaryMatch.SourceFieldList"]')?.addEventListener('change', updateSaveButton);
+        document.querySelector('select[name="PrimaryMatch.TargetFieldList"]')?.addEventListener('change', updateSaveButton);
+        updateSaveButton();
 
         const toggle = document.getElementById('showAllSourceFields');
         const updateVisibility = () => {
@@ -597,20 +692,22 @@
         const updateRuleValueVisibility = row => {
             const op = row.querySelector('.rule-operator').value;
             const cell = row.querySelector('.rule-value-cell');
+            const toggle = row.querySelector('.rule-value-toggle');
             if (op === 'exists') {
                 cell.classList.add('d-none');
+                if (toggle) toggle.classList.add('d-none');
                 row.querySelector('.rule-value-hidden').value = '';
                 row.querySelector('.rule-value-constant').value = '';
                 row.querySelector('.rule-value-source').value = '';
                 return;
             }
             cell.classList.remove('d-none');
+            if (toggle) toggle.classList.remove('d-none');
             const isSource = row.querySelector('.rule-value-issource').checked;
             row.querySelector('.rule-value-constant').classList.toggle('d-none', isSource);
             row.querySelector('.rule-value-source').classList.toggle('d-none', !isSource);
         };
         const clearRuleRow = row => {
-            row.querySelector('.rule-source').value = '';
             row.querySelector('.rule-operator').value = 'equals';
             row.querySelector('.rule-value-hidden').value = '';
             row.querySelector('.rule-value-constant').value = '';
@@ -624,10 +721,25 @@
             const limit = section.querySelector('.rule-limit');
             if (limit) limit.classList.toggle('d-none', hidden > 0);
         };
-        const setOutputVisibility = section => {
-            const isSource = section.querySelector('input[type="radio"][value="source"]').checked;
-            section.querySelector('.output-constant').classList.toggle('d-none', isSource);
-            section.querySelector('.output-source').classList.toggle('d-none', !isSource);
+        const updateOutputVisibility = section => {
+            const isSource = section.querySelector('.output-is-source')?.checked ?? false;
+            const constInput = section.querySelector('.output-constant');
+            const sourceSelect = section.querySelector('.output-source');
+            const numberWrapper = section.querySelector('.output-is-number-wrapper');
+            const numberCheckbox = section.querySelector('.output-is-number');
+            if (constInput) constInput.classList.toggle('d-none', isSource);
+            if (sourceSelect) sourceSelect.classList.toggle('d-none', !isSource);
+            if (numberWrapper) numberWrapper.classList.toggle('d-none', isSource);
+            if (isSource) {
+                if (constInput) constInput.value = '';
+                if (numberCheckbox) numberCheckbox.checked = false;
+            } else {
+                if (sourceSelect) sourceSelect.value = '';
+            }
+        };
+        const updateRulePrefixes = section => {
+            const logic = section.querySelector('.rule-logic-select')?.value === 'or' ? 'OR' : 'AND';
+            section.querySelectorAll('.rule-prefix-text').forEach(span => span.textContent = logic);
         };
         if (fieldMapsTable) {
             fieldMapsTable.addEventListener('change', e => {
@@ -636,6 +748,18 @@
                     const section = row?.nextElementSibling;
                     if (section?.classList.contains('rule-section')) {
                         section.classList.toggle('d-none', e.target.value !== 'rule-based');
+                    }
+                }
+            });
+            fieldMapsTable.addEventListener('change', e => {
+                const sourceSelect = e.target.closest('select[name^="FieldMaps["][name$=".Source"]');
+                if (sourceSelect) {
+                    const row = e.target.closest('.field-map-row');
+                    const section = row?.nextElementSibling;
+                    if (section?.classList.contains('rule-section')) {
+                        const value = sourceSelect.value;
+                        section.querySelectorAll('input[type="hidden"][name$=".Source"]').forEach(input => input.value = value);
+                        section.querySelectorAll('.rule-source-display').forEach(el => el.textContent = value || 'No source selected');
                     }
                 }
             });
@@ -661,9 +785,11 @@
                 if (e.target.classList.contains('rule-operator') || e.target.classList.contains('rule-value-issource')) {
                     updateRuleValueVisibility(e.target.closest('.rule-row'));
                 }
-                if (e.target.classList.contains('output-type')) {
-                    const section = e.target.closest('.rule-section');
-                    setOutputVisibility(section);
+                if (e.target.classList.contains('output-is-source')) {
+                    updateOutputVisibility(e.target.closest('.rule-section'));
+                }
+                if (e.target.classList.contains('rule-logic-select')) {
+                    updateRulePrefixes(e.target.closest('.rule-section'));
                 }
             });
             fieldMapsTable.addEventListener('input', e => {
@@ -679,13 +805,100 @@
                 }
             });
         }
+        const addFieldMapButton = document.getElementById('addFieldMap');
+        const fieldMapLimit = document.getElementById('fieldMapLimit');
+        const updateFieldMapLimit = () => {
+            const count = fieldMapsTable?.querySelectorAll(':scope > tbody > tr.field-map-row').length ?? 0;
+            if (addFieldMapButton) addFieldMapButton.disabled = count >= 30;
+            if (fieldMapLimit) fieldMapLimit.textContent = count >= 30 ? 'Maximum 30 field maps reached.' : 'Maximum 30 field maps.';
+        };
+        const renumberFieldMap = (fieldRow, ruleRow, index) => {
+            const oldMapMatch = fieldRow.innerHTML.match(/FieldMaps\[(\d+)\]/);
+            const oldIndex = oldMapMatch ? parseInt(oldMapMatch[1], 10) : null;
+            if (oldIndex === null || oldIndex === index) return;
+            const replaceInAttributes = el => {
+                ['name', 'id', 'for', 'data-map-index'].forEach(attr => {
+                    if (!el.hasAttribute(attr)) return;
+                    let value = el.getAttribute(attr);
+                    value = value.replaceAll(`FieldMaps[${oldIndex}]`, `FieldMaps[${index}]`);
+                    value = value.replaceAll(`FieldMaps_${oldIndex}__`, `FieldMaps_${index}__`);
+                    value = value.replaceAll(`outputType_${oldIndex}`, `outputType_${index}`);
+                    value = value.replaceAll(`outputTypeConst_${oldIndex}`, `outputTypeConst_${index}`);
+                    value = value.replaceAll(`outputTypeSource_${oldIndex}`, `outputTypeSource_${index}`);
+                    el.setAttribute(attr, value);
+                });
+            };
+            fieldRow.querySelectorAll('*').forEach(replaceInAttributes);
+            replaceInAttributes(fieldRow);
+            if (ruleRow) {
+                ruleRow.querySelectorAll('*').forEach(replaceInAttributes);
+                replaceInAttributes(ruleRow);
+            }
+        };
+        const clearFieldMapRow = (fieldRow, ruleRow) => {
+            const source = fieldRow.querySelector('select[name^="FieldMaps["][name$=".Source"]');
+            const target = fieldRow.querySelector('select[name^="FieldMaps["][name$=".Target"]');
+            const transform = fieldRow.querySelector('select[name^="FieldMaps["][name$=".Transform"]');
+            if (source) source.value = '';
+            if (target) target.value = '';
+            if (transform) transform.value = 'copy';
+            if (ruleRow) {
+                ruleRow.classList.add('d-none');
+                ruleRow.querySelectorAll('.rule-row').forEach(r => {
+                    r.classList.add('d-none');
+                    clearRuleRow(r);
+                });
+                ruleRow.querySelectorAll('input[type="hidden"][name$=".Source"]').forEach(input => input.value = '');
+                ruleRow.querySelectorAll('.rule-source-display').forEach(el => el.textContent = 'No source selected');
+                const outputIsSource = ruleRow.querySelector('.output-is-source');
+                if (outputIsSource) outputIsSource.checked = false;
+                const outputValue = ruleRow.querySelector('.output-constant');
+                const outputSource = ruleRow.querySelector('.output-source');
+                const outputNumber = ruleRow.querySelector('.output-is-number');
+                if (outputValue) outputValue.value = '';
+                if (outputSource) outputSource.value = '';
+                if (outputNumber) outputNumber.checked = false;
+                updateOutputVisibility(ruleRow);
+                const limit = ruleRow.querySelector('.rule-limit');
+                if (limit) limit.classList.add('d-none');
+            }
+        };
+        if (addFieldMapButton && fieldMapsTable) {
+            addFieldMapButton.addEventListener('click', () => {
+                const rows = fieldMapsTable.querySelectorAll(':scope > tbody > tr.field-map-row');
+                if (rows.length >= 30) return;
+                const lastFieldRow = rows[rows.length - 1];
+                const lastRuleRow = lastFieldRow.nextElementSibling;
+                const newFieldRow = lastFieldRow.cloneNode(true);
+                const newRuleRow = lastRuleRow && lastRuleRow.classList.contains('rule-section') ? lastRuleRow.cloneNode(true) : null;
+                const newIndex = rows.length;
+                renumberFieldMap(newFieldRow, newRuleRow, newIndex);
+                clearFieldMapRow(newFieldRow, newRuleRow);
+                const tbody = fieldMapsTable.querySelector('tbody');
+                tbody.appendChild(newFieldRow);
+                if (newRuleRow) tbody.appendChild(newRuleRow);
+                updateFieldMapLimit();
+                newRuleRow?.querySelectorAll('.rule-row').forEach(updateRuleValueVisibility);
+            });
+        }
+        updateFieldMapLimit();
+
         document.querySelectorAll('.rule-row').forEach(updateRuleValueVisibility);
         document.querySelectorAll('.rule-section').forEach(section => {
-            const checkedRadio = section.querySelector('input[type="radio"]:checked');
-            if (checkedRadio) {
-                setOutputVisibility(section);
-            }
+            updateOutputVisibility(section);
+            updateRulePrefixes(section);
             updateRuleLimit(section);
+        });
+        form?.addEventListener('submit', e => {
+            const invalidRule = Array.from(document.querySelectorAll('.rule-section:not(.d-none) .rule-row:not(.d-none)')).find(row => {
+                const sourceInput = row.querySelector('input[type="hidden"][name$=".Source"]');
+                return !sourceInput?.value?.trim();
+            });
+            if (invalidRule) {
+                e.preventDefault();
+                alert('Please select a source field for the field map before adding rules.');
+                invalidRule.closest('.rule-section')?.previousElementSibling?.querySelector('select[name$=".Source"]')?.focus();
+            }
         });
     })();
 </script>
