@@ -56,6 +56,7 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IJobProcessor, JobProcessor>();
 builder.Services.AddHostedService<SyncEngine>();
 builder.Services.AddSingleton<IAlertService, AlertService>();
+builder.Services.AddScoped<IConfigurationStatusService, ConfigurationStatusService>();
 
 // The initial match review posts about ten form values per record. The default limit of 1024 is reached
 // at roughly a hundred records and the request then fails inside model binding, before any handler or
@@ -110,6 +111,9 @@ static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
     await EnsureColumnAsync(db, "AuditLogs", "DurationMs", "INTEGER NOT NULL DEFAULT 0");
     await EnsureColumnAsync(db, "SyncBookmarks", "InductionCursorsJson", "TEXT NOT NULL DEFAULT '{}'");
     await EnsureColumnAsync(db, "SyncProfiles", "SyncWindowDays", "INTEGER NOT NULL DEFAULT 7");
+    await EnsureColumnAsync(db, "SyncProfiles", "BridgeMessageTarget", "TEXT NOT NULL DEFAULT ''");
+    await EnsureColumnAsync(db, "SyncProfiles", "DefaultUnmatchedAction", "INTEGER NOT NULL DEFAULT 0");
+    await EnsureColumnAsync(db, "ManualMatchQueues", "UpdatedAt", "TEXT NOT NULL DEFAULT ''");
 }
 
 static async Task EnsureColumnAsync(BridgeDbContext db, string tableName, string columnName, string columnDefinition)

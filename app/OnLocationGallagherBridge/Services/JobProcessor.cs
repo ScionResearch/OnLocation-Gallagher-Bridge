@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OnLocationGallagherBridge.Data;
@@ -59,6 +60,50 @@ public class JobProcessor : IJobProcessor
             return;
         }
 
+        if (mapping == null)
+        {
+            switch (profile.DefaultUnmatchedAction)
+            {
+                case UnmatchedAction.CreateNew:
+                    mapping = new EntityMapping
+                    {
+                        ProfileId = profile.Id,
+                        SourceType = profile.EntityType,
+                        SourceId = entityId ?? "",
+                        GallagherHref = string.Empty,
+                        ManualOverride = true
+                    };
+                    _db.EntityMappings.Add(mapping);
+                    break;
+                case UnmatchedAction.Ignore:
+                    _db.EntityMappings.Add(new EntityMapping
+                    {
+                        ProfileId = profile.Id,
+                        SourceType = profile.EntityType,
+                        SourceId = entityId ?? "",
+                        GallagherHref = string.Empty,
+                        Excluded = true
+                    });
+                    job.Status = "Complete";
+                    job.UpdatedAt = DateTimeOffset.UtcNow;
+                    await _db.SaveChangesAsync(ct);
+                    await _audit.LogAsync(new AuditEntry
+                    {
+                        CorrelationId = correlationId,
+                        ProfileId = profile.Id,
+                        SourceId = entityId ?? "",
+                        SourceDisplay = display,
+                        Action = "Ignored",
+                        Outcome = "Success",
+                        AfterJson = job.PayloadJson,
+                        Message = "No Gallagher cardholder matched this OnLocation record and the profile default is Ignore.",
+                        DurationMs = (int)stopwatch.ElapsedMilliseconds
+                    });
+                    _logger.Information("Profile {Profile} source {Source} ({Display}) ignored by default", profile.Id, entityId, display);
+                    return;
+            }
+        }
+
         if (mapping == null || !mapping.ManualOverride)
         {
             await QueueManualMatchAsync(profile, job, entityId, mapping, ct);
@@ -85,7 +130,7 @@ public class JobProcessor : IJobProcessor
         }
 
         var payload = await _transform.BuildCardholderPayloadAsync(transformed, mapping.GallagherHref, ct);
-        if (!payload.ContainsKey("description")) payload["description"] = "Synced from OnLocation";
+        ApplyBridgeMessage(profile, payload, string.IsNullOrEmpty(mapping.GallagherHref) ? "Created" : "Updated");
         var payloadJson = JsonSerializer.Serialize(payload);
 
         string? href;
@@ -203,10 +248,20 @@ public class JobProcessor : IJobProcessor
             BeforeJson = string.IsNullOrEmpty(before) ? null : before,
             AfterJson = payloadJson,
             GallagherHref = href,
-            Message = Summarise(action, payload),
+            Message = Summarise(action, payload, profile.BridgeMessageTarget),
             DurationMs = (int)stopwatch.ElapsedMilliseconds
         });
         _logger.Information("Profile {Profile} source {Source} ({Display}) {Action} href {Href}", profile.Id, entityId, display, action, href);
+    }
+
+    private static void ApplyBridgeMessage(SyncProfile profile, Dictionary<string, object?> payload, string action)
+    {
+        var target = profile.BridgeMessageTarget?.Trim();
+        if (string.IsNullOrWhiteSpace(target)) return;
+
+        var fieldName = TransformEngine.ToGallagherFieldName(target);
+        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+        payload[fieldName] = $"{action} by OnLocation Bridge - {timestamp}";
     }
 
     // Every poll used to add another queue row for the same person, which is how a handful of unmatched records
@@ -236,9 +291,12 @@ public class JobProcessor : IJobProcessor
         await _db.SaveChangesAsync(ct);
     }
 
-    private static string Summarise(string action, Dictionary<string, object?> payload)
+    private static string Summarise(string action, Dictionary<string, object?> payload, string? bridgeMessageTarget)
     {
-        var fields = payload.Keys.Where(k => !k.Equals("description", StringComparison.OrdinalIgnoreCase)).ToList();
+        var excludedTarget = TransformEngine.ToGallagherFieldName(bridgeMessageTarget ?? string.Empty);
+        var fields = payload.Keys.Where(k =>
+            !k.Equals("description", StringComparison.OrdinalIgnoreCase)
+            && !k.Equals(excludedTarget, StringComparison.OrdinalIgnoreCase)).ToList();
         var competencies = payload.ContainsKey("competencies") ? " including competencies" : string.Empty;
         var verb = action == "Create" ? "Created cardholder with" : "Updated";
         return $"{verb} {fields.Count} field(s){competencies}: {string.Join(", ", fields.Take(12))}";

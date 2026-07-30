@@ -1,0 +1,39 @@
+@model OnLocationGallagherBridge.Services.StatusBannerModel
+@{
+    var (label, badgeClass) = Model.Status switch
+    {
+        ConfigurationStatus.NotConfigured => ("Not configured", "bg-secondary"),
+        ConfigurationStatus.Incomplete => ("Incomplete", "bg-warning text-dark"),
+        ConfigurationStatus.Faulty => ("Faulty", "bg-danger"),
+        ConfigurationStatus.Complete => ("Complete", "bg-success"),
+        _ => ("Unknown", "bg-secondary")
+    };
+
+    var alertClass = Model.Status switch
+    {
+        ConfigurationStatus.NotConfigured => "alert-secondary",
+        ConfigurationStatus.Incomplete => "alert-warning",
+        ConfigurationStatus.Faulty => "alert-danger",
+        ConfigurationStatus.Complete => "alert-success",
+        _ => "alert-secondary"
+    };
+
+    var defaultDetail = Model.Status switch
+    {
+        ConfigurationStatus.NotConfigured => "This section has not been configured yet.",
+        ConfigurationStatus.Incomplete => "Some required configuration is still missing.",
+        ConfigurationStatus.Faulty => "The configuration is present but a connection check failed.",
+        ConfigurationStatus.Complete => "This section is fully configured.",
+        _ => string.Empty
+    };
+
+    var detail = Model.Detail ?? defaultDetail;
+}
+
+<div class="alert @alertClass d-flex justify-content-between align-items-center mb-4" role="alert">
+    <div>
+        <strong>@Model.Title</strong>
+        <span class="badge @badgeClass ms-1">@label</span>
+        <span class="ms-2 small">@detail</span>
+    </div>
+</div>

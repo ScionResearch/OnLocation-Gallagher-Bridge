@@ -11,11 +11,17 @@ namespace OnLocationGallagherBridge.Pages;
 public class ExceptionsModel : PageModel
 {
     private readonly BridgeDbContext _db;
+    private readonly IIdentityMatcher _matcher;
+    private readonly IGallagherConnector _gallagher;
+    private readonly IAuditService _audit;
     private readonly Serilog.ILogger _logger;
 
-    public ExceptionsModel(BridgeDbContext db)
+    public ExceptionsModel(BridgeDbContext db, IIdentityMatcher matcher, IGallagherConnector gallagher, IAuditService audit)
     {
         _db = db;
+        _matcher = matcher;
+        _gallagher = gallagher;
+        _audit = audit;
         _logger = Serilog.Log.Logger.ForContext<ExceptionsModel>();
     }
 
@@ -42,7 +48,22 @@ public class ExceptionsModel : PageModel
         public List<FailureRow> Rows { get; set; } = new();
     }
 
+    public class ManualMatchRow
+    {
+        public Guid QueueId { get; set; }
+        public string ProfileId { get; set; } = string.Empty;
+        public string SourceId { get; set; } = string.Empty;
+        public string Display { get; set; } = string.Empty;
+        public string SourceJson { get; set; } = "{}";
+        public string? CandidateHref { get; set; }
+        public string? CandidateDisplay { get; set; }
+        public double Confidence { get; set; }
+        public string Reason { get; set; } = string.Empty;
+        public List<Microsoft.AspNetCore.Mvc.Rendering.SelectListItem> CandidateOptions { get; set; } = new();
+    }
+
     public List<ErrorGroup> Groups { get; set; } = new();
+    public List<ManualMatchRow> ManualMatches { get; set; } = new();
     public int PendingManualMatches { get; set; }
     public int StaleLinks { get; set; }
     public string? Message { get; set; }
@@ -97,6 +118,7 @@ public class ExceptionsModel : PageModel
 
         PendingManualMatches = await _db.ManualMatchQueues.CountAsync(m => m.Status == "Pending", ct);
         StaleLinks = await _db.AuditLogs.CountAsync(a => a.Action == "StaleLink", ct);
+        await LoadManualMatchesAsync(ct);
     }
 
     public async Task<IActionResult> OnPostRetryAsync(Guid jobId, CancellationToken ct)
@@ -215,6 +237,222 @@ public class ExceptionsModel : PageModel
     {
         var profile = await _db.SyncProfiles.FindAsync(new object?[] { profileId }, cancellationToken: ct);
         if (profile != null) profile.NextRun = DateTimeOffset.UtcNow;
+    }
+
+    private async Task LoadManualMatchesAsync(CancellationToken ct)
+    {
+        var queueItems = await _db.ManualMatchQueues
+            .Where(m => m.Status == "Pending")
+            .OrderByDescending(m => m.CreatedAt)
+            .ToListAsync(ct);
+
+        var profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
+        var profileMap = profiles.ToDictionary(p => p.Id);
+
+        ManualMatches = new List<ManualMatchRow>();
+        var candidatesByProfile = new Dictionary<string, IReadOnlyList<JsonElement>>();
+
+        foreach (var item in queueItems)
+        {
+            if (!profileMap.TryGetValue(item.ProfileId, out var profile)) continue;
+
+            JsonElement source;
+            try
+            {
+                using var doc = JsonDocument.Parse(item.SourceJson);
+                source = doc.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                continue;
+            }
+
+            if (!candidatesByProfile.TryGetValue(profile.Id, out var candidates))
+            {
+                candidates = await _gallagher.GetCardholdersAsync(250, ct, BuildCandidateFieldSpecifier(profile));
+                if (candidates.Count == 0) candidates = await _gallagher.GetCardholdersAsync(250, ct);
+                candidatesByProfile[profile.Id] = candidates;
+            }
+
+            var match = await _matcher.FindBestMatchAsync(profile, source, candidates, ct);
+            var candidateHref = item.CandidateHref ?? match?.GallagherHref;
+            var candidateDisplay = candidateHref is null ? null : GetDisplay(candidates.FirstOrDefault(c => string.Equals(GetString(c, "href") ?? string.Empty, candidateHref, StringComparison.OrdinalIgnoreCase)));
+
+            var options = candidates
+                .Select(c => new Microsoft.AspNetCore.Mvc.Rendering.SelectListItem
+                {
+                    Text = GetDisplay(c),
+                    Value = GetString(c, "href") ?? string.Empty,
+                    Selected = candidateHref is not null && string.Equals(GetString(c, "href") ?? string.Empty, candidateHref, StringComparison.OrdinalIgnoreCase)
+                })
+                .Where(o => !string.IsNullOrWhiteSpace(o.Value))
+                .OrderBy(o => o.Text)
+                .ToList();
+
+            ManualMatches.Add(new ManualMatchRow
+            {
+                QueueId = item.Id,
+                ProfileId = item.ProfileId,
+                SourceId = item.SourceId,
+                Display = Describe(item.SourceJson, item.SourceId),
+                SourceJson = Prettify(item.SourceJson),
+                CandidateHref = candidateHref,
+                CandidateDisplay = candidateDisplay,
+                Confidence = match?.Confidence ?? 0,
+                Reason = match?.Reason ?? (candidateHref is null ? "No match found" : "Suggested match"),
+                CandidateOptions = options
+            });
+        }
+    }
+
+    public async Task<IActionResult> OnPostResolveCreateAsync(Guid queueId, CancellationToken ct)
+    {
+        var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
+        if (queue == null) return RedirectToPage();
+
+        var mapping = await FindOrAddMappingAsync(profile, queue.SourceId, ct);
+        mapping.GallagherHref = string.Empty;
+        mapping.GallagherId = null;
+        mapping.ManualOverride = true;
+        mapping.Excluded = false;
+        mapping.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await FinaliseResolutionAsync(queue, job, mapping, "Pending", ct);
+        TempData["Message"] = $"{queue.SourceId} will be created as a new cardholder on the next sync.";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostResolveMatchAsync(Guid queueId, string candidateHref, CancellationToken ct)
+    {
+        var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
+        if (queue == null) return RedirectToPage();
+        if (string.IsNullOrWhiteSpace(candidateHref))
+        {
+            TempData["Message"] = "Please select a cardholder to match.";
+            return RedirectToPage();
+        }
+
+        var mapping = await FindOrAddMappingAsync(profile, queue.SourceId, ct);
+        mapping.GallagherHref = candidateHref;
+        mapping.ManualOverride = true;
+        mapping.Excluded = false;
+        mapping.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await FinaliseResolutionAsync(queue, job, mapping, "Pending", ct);
+        TempData["Message"] = $"{queue.SourceId} matched to the selected cardholder.";
+        return RedirectToPage();
+    }
+
+    public async Task<IActionResult> OnPostResolveIgnoreAsync(Guid queueId, CancellationToken ct)
+    {
+        var (queue, profile, job) = await ResolveQueueItem(queueId, ct);
+        if (queue == null) return RedirectToPage();
+
+        var mapping = await FindOrAddMappingAsync(profile, queue.SourceId, ct);
+        mapping.GallagherHref = string.Empty;
+        mapping.GallagherId = null;
+        mapping.ManualOverride = false;
+        mapping.Excluded = true;
+        mapping.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await FinaliseResolutionAsync(queue, job, mapping, "Complete", ct);
+        TempData["Message"] = $"{queue.SourceId} will be ignored.";
+        return RedirectToPage();
+    }
+
+    private async Task<(ManualMatchQueue? Queue, SyncProfile? Profile, SyncJob? Job)> ResolveQueueItem(Guid queueId, CancellationToken ct)
+    {
+        var queue = await _db.ManualMatchQueues.FindAsync(new object?[] { queueId }, cancellationToken: ct);
+        if (queue == null)
+        {
+            TempData["Message"] = "That record is no longer waiting for a match.";
+            return (null, null, null);
+        }
+
+        var profile = await _db.SyncProfiles.FindAsync(new object?[] { queue.ProfileId }, cancellationToken: ct);
+        if (profile == null)
+        {
+            TempData["Message"] = "The profile for that record no longer exists.";
+            return (null, null, null);
+        }
+
+        var job = await _db.SyncJobs
+            .FirstOrDefaultAsync(j => j.ProfileId == queue.ProfileId && j.SourceId == queue.SourceId && j.Status == "ManualReview", ct);
+
+        return (queue, profile, job);
+    }
+
+    private async Task<EntityMapping> FindOrAddMappingAsync(SyncProfile profile, string sourceId, CancellationToken ct)
+    {
+        var mapping = await _db.EntityMappings
+            .FirstOrDefaultAsync(m => m.ProfileId == profile.Id && m.SourceType == profile.EntityType && m.SourceId == sourceId, ct);
+        if (mapping != null) return mapping;
+
+        mapping = new EntityMapping
+        {
+            ProfileId = profile.Id,
+            SourceType = profile.EntityType,
+            SourceId = sourceId,
+            GallagherHref = string.Empty,
+            ManualOverride = false
+        };
+        _db.EntityMappings.Add(mapping);
+        return mapping;
+    }
+
+    private async Task FinaliseResolutionAsync(ManualMatchQueue queue, SyncJob? job, EntityMapping mapping, string jobStatus, CancellationToken ct)
+    {
+        queue.Status = "Approved";
+        queue.UpdatedAt = DateTimeOffset.UtcNow;
+        await _db.SaveChangesAsync(ct);
+
+        if (job != null)
+        {
+            job.Status = jobStatus;
+            job.Error = null;
+            job.UpdatedAt = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            await BringProfileForwardAsync(job.ProfileId, ct);
+            await _db.SaveChangesAsync(ct);
+        }
+    }
+
+    private static string BuildCandidateFieldSpecifier(SyncProfile profile)
+    {
+        var rules = JsonSerializer.Deserialize<List<MatchRuleDto>>(profile.MatchRulesJson) ?? new List<MatchRuleDto>();
+        var fields = new List<string> { "defaults" };
+        foreach (var target in rules.SelectMany(r => r.TargetFields.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)))
+        {
+            var root = target.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(root) && !fields.Contains(root, StringComparer.OrdinalIgnoreCase)) fields.Add(root);
+        }
+        return string.Join(',', fields);
+    }
+
+    private static string GetDisplay(JsonElement candidate)
+    {
+        var first = GetString(candidate, "firstName");
+        var last = GetString(candidate, "lastName");
+        var name = $"{first} {last}".Trim();
+        if (string.IsNullOrWhiteSpace(name)) name = GetString(candidate, "shortName") ?? GetString(candidate, "name") ?? string.Empty;
+        var email = GetString(candidate, "email");
+        if (!string.IsNullOrWhiteSpace(email) && !string.IsNullOrWhiteSpace(name)) return $"{name} ({email})";
+        return !string.IsNullOrWhiteSpace(name) ? name : email ?? "Unknown cardholder";
+    }
+
+    private static string? GetString(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (element.TryGetProperty(name, out var prop))
+            {
+                if (prop.ValueKind == JsonValueKind.String) return prop.GetString();
+                if (prop.ValueKind == JsonValueKind.Number) return prop.GetRawText();
+                if (prop.ValueKind == JsonValueKind.True) return "true";
+                if (prop.ValueKind == JsonValueKind.False) return "false";
+            }
+        }
+        return null;
     }
 
     private static string Normalise(string? error)

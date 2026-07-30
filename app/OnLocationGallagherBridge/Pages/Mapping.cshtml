@@ -15,6 +15,8 @@
     <div class="alert alert-info">@Model.Message</div>
 }
 
+<partial name="_StatusBanner" model='new StatusBannerModel("Field Mapping", Model.FieldMappingStatus)' />
+
 <form method="post">
     <div class="mb-3">
         <label class="form-label">Sync Profile</label>
@@ -75,10 +77,55 @@
         <div class="form-text">Optional. Hold Ctrl (or Cmd) to select more than one, or none to leave new cardholders without access.</div>
     </div>
 </div>
+<div class="row">
+    <div class="col-md-6 mb-3">
+        <label class="form-label" asp-for="DefaultUnmatchedAction">Default action for unmatched records</label>
+        <select class="form-select" asp-for="DefaultUnmatchedAction">
+            <option value="ManualReview">Manual review</option>
+            <option value="CreateNew">Create new cardholder</option>
+            <option value="Ignore">Ignore</option>
+        </select>
+        <div class="form-text">What the bridge should do when a synced OnLocation record has no matching Gallagher cardholder.</div>
+    </div>
+</div>
 @if (!Model.DivisionOptions.Any())
 {
     <div class="alert alert-warning py-2 small">Divisions and access groups have not been retrieved yet. Click <strong>Get OnLocation &amp; Gallagher Fields</strong> to populate these lists.</div>
 }
+
+<h4 class="mt-4">Bridge sync message</h4>
+<p>Choose where to record a short timestamped message each time the bridge creates or updates a cardholder. Select <em>none</em> to leave cardholder fields untouched.</p>
+<div class="row">
+    <div class="col-md-6 mb-3">
+        <label class="form-label" asp-for="BridgeMessageTarget">Target field</label>
+        <select class="form-select" asp-for="BridgeMessageTarget">
+            <option value="">-- none --</option>
+            <option value="description">Description</option>
+            @{
+                var savedTarget = Model.BridgeMessageTarget;
+                var savedFieldName = savedTarget.StartsWith("personalDataFields.", StringComparison.OrdinalIgnoreCase)
+                    ? savedTarget["personalDataFields.".Length..]
+                    : savedTarget;
+                var savedFieldInList = !string.IsNullOrWhiteSpace(savedTarget)
+                    && Model.GallagherPersonalDataFieldNames.Any(f => string.Equals($"personalDataFields.{f}", savedTarget, StringComparison.OrdinalIgnoreCase));
+            }
+            @if (!string.IsNullOrWhiteSpace(savedTarget) && !savedFieldInList && !string.Equals(savedTarget, "description", StringComparison.OrdinalIgnoreCase))
+            {
+                <option value="@savedTarget">@savedFieldName</option>
+            }
+            @if (Model.GallagherPersonalDataFieldNames.Any())
+            {
+                <optgroup label="Personal Data Fields">
+                    @foreach (var f in Model.GallagherPersonalDataFieldNames)
+                    {
+                        <option value="@($"personalDataFields.{f}")">@f</option>
+                    }
+                </optgroup>
+            }
+        </select>
+        <div class="form-text">The description field may be visible to Gallagher operators, so a personal data field is usually a safer choice.</div>
+    </div>
+</div>
 
 @if (Model.SourceFields.Any() || Model.InductionFieldGroups.Any() || Model.GallagherFields.Any() || Model.GallagherPersonalDataFieldNames.Any() || Model.GallagherCompetencyNames.Any())
 {
@@ -176,13 +223,15 @@
 }
 
 <h4 class="mt-4">Field maps</h4>
-<p>Map an OnLocation source field to a Gallagher target field.</p>
-<table class="table table-sm">
+<p>Map an OnLocation source field to a Gallagher target field. Choose <strong>Rule based</strong> to set the target only when conditions match.</p>
+<table class="table table-sm" id="fieldMapsTable">
     <thead><tr><th>OnLocation source field</th><th>Gallagher target field</th><th>Transform</th></tr></thead>
     <tbody>
         @for (int i = 0; i < Model.FieldMaps.Count; i++)
         {
-            <tr>
+            var map = Model.FieldMaps[i];
+            var isRuleBased = string.Equals(map.Transform, "rule-based", StringComparison.OrdinalIgnoreCase);
+            <tr class="field-map-row">
                 <td>
                     <select class="form-select" asp-for="FieldMaps[i].Source">
                         <option value="">-- select --</option>
@@ -248,12 +297,96 @@
                     </select>
                 </td>
                 <td>
-                    <select class="form-select" asp-for="FieldMaps[i].Transform">
+                    <select class="form-select transform-select" asp-for="FieldMaps[i].Transform">
                         <option value="copy">Copy value</option>
                         <option value="first-name">First name (first word)</option>
                         <option value="last-name">Last name (remaining words)</option>
                         <option value="gallagher-expiry">Gallagher competency expiry (NZ end of day)</option>
+                        <option value="rule-based">Rule based</option>
                     </select>
+                </td>
+            </tr>
+            <tr class="rule-section @(!isRuleBased ? "d-none" : "")" data-map-index="@i">
+                <td colspan="3" class="py-3 bg-light">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Rule logic</label>
+                            <select class="form-select form-select-sm" asp-for="FieldMaps[i].RuleLogic">
+                                <option value="and">All rules must match (AND)</option>
+                                <option value="or">Any rule can match (OR)</option>
+                            </select>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">Output value when rules match</label>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input output-type" type="radio" name="outputType_@i" id="outputTypeConst_@i" value="constant" checked="@(string.IsNullOrWhiteSpace(map.RuleOutputSource))" />
+                                <label class="form-check-label" for="outputTypeConst_@i">Constant</label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input output-type" type="radio" name="outputType_@i" id="outputTypeSource_@i" value="source" checked="@(!string.IsNullOrWhiteSpace(map.RuleOutputSource))" />
+                                <label class="form-check-label" for="outputTypeSource_@i">Source field</label>
+                            </div>
+                            <div class="output-constant mt-2 @(string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")">
+                                <input class="form-control form-control-sm" asp-for="FieldMaps[i].RuleOutputValue" placeholder="Value to write" />
+                                <div class="form-check mt-1">
+                                    <input class="form-check-input" type="checkbox" asp-for="FieldMaps[i].RuleOutputIsNumber" />
+                                    <label class="form-check-label" asp-for="FieldMaps[i].RuleOutputIsNumber">Value is a number</label>
+                                </div>
+                            </div>
+                            <div class="output-source mt-2 @(!string.IsNullOrWhiteSpace(map.RuleOutputSource) ? "" : "d-none")">
+                                <select class="form-select form-select-sm" asp-for="FieldMaps[i].RuleOutputSource">
+                                    @Model.RenderSourceFieldOptions(map.RuleOutputSource)
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <label class="form-label mt-3">Rules</label>
+                    <table class="table table-sm table-borderless">
+                        <tbody class="rule-rows">
+                            @for (int j = 0; j < map.Rules.Count; j++)
+                            {
+                                var rule = map.Rules[j];
+                                var ruleVisible = !string.IsNullOrWhiteSpace(rule.Source);
+                                var valueIsSource = rule.ValueIsSource;
+                                <tr class="rule-row @(ruleVisible ? "" : "d-none")" data-rule-index="@j">
+                                    <td>
+                                        <select class="form-select form-select-sm rule-source" asp-for="FieldMaps[i].Rules[j].Source">
+                                            @Model.RenderSourceFieldOptions(rule.Source)
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <select class="form-select form-select-sm rule-operator" asp-for="FieldMaps[i].Rules[j].Operator">
+                                            <option value="equals">equals</option>
+                                            <option value="not-equals">does not equal</option>
+                                            <option value="greater-than">greater than</option>
+                                            <option value="less-than">less than</option>
+                                            <option value="contains">contains</option>
+                                            <option value="not-contains">does not contain</option>
+                                            <option value="exists">exists</option>
+                                        </select>
+                                    </td>
+                                    <td class="rule-value-cell">
+                                        <input type="hidden" asp-for="FieldMaps[i].Rules[j].Value" class="rule-value-hidden" />
+                                        <input type="text" class="form-control form-control-sm rule-value-constant @(valueIsSource ? "d-none" : "")" placeholder="Value" value="@rule.Value" />
+                                        <select class="form-select form-select-sm rule-value-source @(!valueIsSource ? "d-none" : "")">
+                                            @Model.RenderSourceFieldOptions(rule.Value)
+                                        </select>
+                                    </td>
+                                    <td>
+                                        <div class="form-check">
+                                            <input class="form-check-input rule-value-issource" type="checkbox" asp-for="FieldMaps[i].Rules[j].ValueIsSource" />
+                                            <label class="form-check-label" asp-for="FieldMaps[i].Rules[j].ValueIsSource">Use source field</label>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn btn-sm btn-outline-danger remove-rule">Remove</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    <button type="button" class="btn btn-sm btn-outline-primary add-rule">Add rule</button>
+                    <small class="text-muted ms-2 rule-limit @(map.Rules.Count(r => !string.IsNullOrWhiteSpace(r.Source)) >= 10 ? "" : "d-none")">Maximum 10 rules reached.</small>
                 </td>
             </tr>
         }
@@ -458,5 +591,101 @@
         };
         toggle.addEventListener('change', updateVisibility);
         updateVisibility();
+
+        // Rule-based transform UI
+        const fieldMapsTable = document.getElementById('fieldMapsTable');
+        const updateRuleValueVisibility = row => {
+            const op = row.querySelector('.rule-operator').value;
+            const cell = row.querySelector('.rule-value-cell');
+            if (op === 'exists') {
+                cell.classList.add('d-none');
+                row.querySelector('.rule-value-hidden').value = '';
+                row.querySelector('.rule-value-constant').value = '';
+                row.querySelector('.rule-value-source').value = '';
+                return;
+            }
+            cell.classList.remove('d-none');
+            const isSource = row.querySelector('.rule-value-issource').checked;
+            row.querySelector('.rule-value-constant').classList.toggle('d-none', isSource);
+            row.querySelector('.rule-value-source').classList.toggle('d-none', !isSource);
+        };
+        const clearRuleRow = row => {
+            row.querySelector('.rule-source').value = '';
+            row.querySelector('.rule-operator').value = 'equals';
+            row.querySelector('.rule-value-hidden').value = '';
+            row.querySelector('.rule-value-constant').value = '';
+            row.querySelector('.rule-value-source').value = '';
+            row.querySelector('.rule-value-issource').checked = false;
+            updateRuleValueVisibility(row);
+        };
+        const updateRuleLimit = section => {
+            const total = section.querySelectorAll('.rule-row').length;
+            const hidden = section.querySelectorAll('.rule-row.d-none').length;
+            const limit = section.querySelector('.rule-limit');
+            if (limit) limit.classList.toggle('d-none', hidden > 0);
+        };
+        const setOutputVisibility = section => {
+            const isSource = section.querySelector('input[type="radio"][value="source"]').checked;
+            section.querySelector('.output-constant').classList.toggle('d-none', isSource);
+            section.querySelector('.output-source').classList.toggle('d-none', !isSource);
+        };
+        if (fieldMapsTable) {
+            fieldMapsTable.addEventListener('change', e => {
+                if (e.target.classList.contains('transform-select')) {
+                    const row = e.target.closest('.field-map-row');
+                    const section = row?.nextElementSibling;
+                    if (section?.classList.contains('rule-section')) {
+                        section.classList.toggle('d-none', e.target.value !== 'rule-based');
+                    }
+                }
+            });
+            fieldMapsTable.addEventListener('click', e => {
+                const button = e.target.closest('.add-rule, .remove-rule');
+                if (!button) return;
+                if (button.classList.contains('add-rule')) {
+                    const section = button.closest('.rule-section');
+                    const hiddenRow = Array.from(section.querySelectorAll('.rule-row')).find(r => r.classList.contains('d-none'));
+                    if (hiddenRow) {
+                        hiddenRow.classList.remove('d-none');
+                        clearRuleRow(hiddenRow);
+                        updateRuleLimit(section);
+                    }
+                } else if (button.classList.contains('remove-rule')) {
+                    const row = button.closest('.rule-row');
+                    row.classList.add('d-none');
+                    clearRuleRow(row);
+                    updateRuleLimit(row.closest('.rule-section'));
+                }
+            });
+            fieldMapsTable.addEventListener('change', e => {
+                if (e.target.classList.contains('rule-operator') || e.target.classList.contains('rule-value-issource')) {
+                    updateRuleValueVisibility(e.target.closest('.rule-row'));
+                }
+                if (e.target.classList.contains('output-type')) {
+                    const section = e.target.closest('.rule-section');
+                    setOutputVisibility(section);
+                }
+            });
+            fieldMapsTable.addEventListener('input', e => {
+                if (e.target.classList.contains('rule-value-constant')) {
+                    const row = e.target.closest('.rule-row');
+                    row.querySelector('.rule-value-hidden').value = e.target.value;
+                }
+            });
+            fieldMapsTable.addEventListener('change', e => {
+                if (e.target.classList.contains('rule-value-source')) {
+                    const row = e.target.closest('.rule-row');
+                    row.querySelector('.rule-value-hidden').value = e.target.value;
+                }
+            });
+        }
+        document.querySelectorAll('.rule-row').forEach(updateRuleValueVisibility);
+        document.querySelectorAll('.rule-section').forEach(section => {
+            const checkedRadio = section.querySelector('input[type="radio"]:checked');
+            if (checkedRadio) {
+                setOutputVisibility(section);
+            }
+            updateRuleLimit(section);
+        });
     })();
 </script>

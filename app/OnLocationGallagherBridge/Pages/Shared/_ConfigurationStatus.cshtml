@@ -1,0 +1,12 @@
+@model OnLocationGallagherBridge.Services.ConfigurationStatus
+@{
+    var (label, cssClass) = Model switch
+    {
+        ConfigurationStatus.NotConfigured => ("Not configured", "bg-secondary"),
+        ConfigurationStatus.Incomplete => ("Incomplete", "bg-warning text-dark"),
+        ConfigurationStatus.Faulty => ("Faulty", "bg-danger"),
+        ConfigurationStatus.Complete => ("Complete", "bg-success"),
+        _ => ("Unknown", "bg-secondary")
+    };
+}
+<span class="badge @cssClass">@label</span>

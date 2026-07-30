@@ -47,6 +47,7 @@ public class TransformEngine : ITransformEngine
                 "first-name" => GetFirstName(GetSourceValue(source, map.Source)),
                 "last-name" => GetLastName(GetSourceValue(source, map.Source)),
                 "gallagher-expiry" => FormatGallagherExpiry(GetSourceValue(source, map.Source)),
+                "rule-based" => EvaluateRuleBasedTransform(source, map),
                 _ => GetSourceValue(source, map.Source)
             };
 
@@ -211,7 +212,7 @@ public class TransformEngine : ITransformEngine
     // The mapping UI addresses Gallagher personal data fields as 'personalDataFields.<name>' because that
     // is the name of the 'fields' request specifier, but Command Centre reads and writes the values at the
     // cardholder root with the PDF name prefixed by '@'.
-    private static string ToGallagherFieldName(string target)
+    public static string ToGallagherFieldName(string target)
     {
         var segments = target.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (segments.Length != 2 || !string.Equals(segments[0], "personalDataFields", StringComparison.OrdinalIgnoreCase))
@@ -230,6 +231,7 @@ public class TransformEngine : ITransformEngine
 
         return value.ValueKind switch
         {
+            JsonValueKind.Null => null,
             JsonValueKind.String => value.GetString() as object,
             JsonValueKind.Number => value.GetDecimal(),
             JsonValueKind.True => true,
@@ -345,5 +347,66 @@ public class TransformEngine : ITransformEngine
             return string.Join(sep, parts);
         }
         return null;
+    }
+
+    private static object? EvaluateRuleBasedTransform(JsonElement source, FieldMapDto map)
+    {
+        if (map.Rules == null || map.Rules.Count == 0) return null;
+        var isAnd = !string.Equals(map.RuleLogic, "or", StringComparison.OrdinalIgnoreCase);
+        var matched = isAnd;
+
+        foreach (var rule in map.Rules)
+        {
+            var condition = EvaluateRule(source, rule);
+            matched = isAnd ? matched && condition : matched || condition;
+            if (isAnd && !matched) break;
+            if (!isAnd && matched) break;
+        }
+
+        if (!matched) return null;
+
+        if (!string.IsNullOrWhiteSpace(map.RuleOutputSource))
+            return GetSourceValue(source, map.RuleOutputSource);
+
+        if (string.IsNullOrWhiteSpace(map.RuleOutputValue)) return null;
+        if (map.RuleOutputIsNumber && decimal.TryParse(map.RuleOutputValue, NumberStyles.Any, CultureInfo.InvariantCulture, out var number))
+            return number;
+        return map.RuleOutputValue;
+    }
+
+    private static bool EvaluateRule(JsonElement source, FieldMapRuleDto rule)
+    {
+        var left = GetSourceValue(source, rule.Source);
+        var right = rule.ValueIsSource ? GetSourceValue(source, rule.Value ?? string.Empty) : rule.Value;
+        var op = rule.Operator?.ToLowerInvariant() ?? "equals";
+
+        switch (op)
+        {
+            case "exists":
+                return left != null;
+            case "equals":
+                return string.Equals(left?.ToString(), right?.ToString(), StringComparison.OrdinalIgnoreCase);
+            case "not-equals":
+                return !string.Equals(left?.ToString(), right?.ToString(), StringComparison.OrdinalIgnoreCase);
+            case "contains":
+                return left?.ToString()?.Contains(right?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase) == true;
+            case "not-contains":
+                return left?.ToString()?.Contains(right?.ToString() ?? string.Empty, StringComparison.OrdinalIgnoreCase) != true;
+            case "greater-than":
+                return CompareNumeric(left, right) > 0;
+            case "less-than":
+                return CompareNumeric(left, right) < 0;
+            default:
+                return false;
+        }
+    }
+
+    private static int CompareNumeric(object? left, object? right)
+    {
+        if (!decimal.TryParse(left?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var l))
+            return int.MinValue;
+        if (!decimal.TryParse(right?.ToString(), NumberStyles.Any, CultureInfo.InvariantCulture, out var r))
+            return int.MinValue;
+        return l.CompareTo(r);
     }
 }

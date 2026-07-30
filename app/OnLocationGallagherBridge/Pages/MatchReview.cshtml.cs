@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
 using OnLocationGallagherBridge.Services;
@@ -19,8 +20,10 @@ public class MatchReviewModel : PageModel
     private readonly IOnLocationConnector _onLocation;
     private readonly ITransformEngine _transform;
     private readonly IMemoryCache _cache;
+    private readonly IConfigurationStatusService _statusService;
+    private readonly IServiceProvider _services;
 
-    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache)
+    public MatchReviewModel(BridgeDbContext db, IOnLocationSourceService source, IGallagherConnector gallagher, IIdentityMatcher matcher, IOnLocationConnector onLocation, ITransformEngine transform, IMemoryCache cache, IConfigurationStatusService statusService, IServiceProvider services)
     {
         _db = db;
         _source = source;
@@ -29,6 +32,8 @@ public class MatchReviewModel : PageModel
         _onLocation = onLocation;
         _transform = transform;
         _cache = cache;
+        _statusService = statusService;
+        _services = services;
     }
 
     [BindProperty]
@@ -57,6 +62,14 @@ public class MatchReviewModel : PageModel
     public string? PreviewRequestId { get; set; }
 
     [BindProperty]
+    public string ApproveRequestId { get; set; } = string.Empty;
+
+    [BindProperty]
+    public bool BackupConfirmed { get; set; }
+
+    public MatchPushStatus? PushStatus { get; set; }
+
+    [BindProperty]
     public List<string> SelectedInductionIds { get; set; } = new();
 
     // Every induction that was rendered as a checkbox. Posted alongside the ticked ones so an empty
@@ -79,6 +92,7 @@ public class MatchReviewModel : PageModel
     public List<SelectListItem> CandidateOptions { get; set; } = new();
 
     public string? Message { get; set; }
+    public ConfigurationStatus InitialMatchStatus { get; set; }
 
     public PreviewTotals? Totals { get; set; }
 
@@ -97,13 +111,39 @@ public class MatchReviewModel : PageModel
     public async Task OnGetAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
+        InitialMatchStatus = await _statusService.GetInitialMatchStatusForAllAsync(ct);
         if (TempData["Message"] is string message) Message = message;
+        var pushRequestId = Request.Query["pushRequestId"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(pushRequestId))
+        {
+            _cache.TryGetValue(GetApproveStatusCacheKey(pushRequestId), out MatchPushStatus? status);
+            PushStatus = status;
+        }
+        var profileId = Request.Query["profileId"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(profileId))
+        {
+            var profile = await _db.SyncProfiles.FindAsync(new object?[] { profileId }, cancellationToken: ct);
+            if (profile is not null)
+            {
+                InitialMatchStatus = _statusService.GetInitialMatchStatus(profile);
+                SelectedProfileId = profileId;
+            }
+        }
     }
 
     public async Task<IActionResult> OnPostLoadInductionsAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
         await LoadInductionOptionsAsync(ct);
+        if (!string.IsNullOrWhiteSpace(SelectedProfileId))
+        {
+            var profile = await _db.SyncProfiles.FindAsync(new object?[] { SelectedProfileId }, cancellationToken: ct);
+            InitialMatchStatus = _statusService.GetInitialMatchStatus(profile);
+        }
+        else
+        {
+            InitialMatchStatus = await _statusService.GetInitialMatchStatusForAllAsync(ct);
+        }
         if (InductionOptions.Count == 0 && Message == null)
             Message = "This profile's field mapping does not reference any inductions, so every record from the endpoint will be considered.";
         return Page();
@@ -114,6 +154,15 @@ public class MatchReviewModel : PageModel
         await LoadProfilesAsync(ct);
         await BuildPreviewAsync(ct);
         await LoadInductionOptionsAsync(ct);
+        if (!string.IsNullOrWhiteSpace(SelectedProfileId))
+        {
+            var profile = await _db.SyncProfiles.FindAsync(new object?[] { SelectedProfileId }, cancellationToken: ct);
+            InitialMatchStatus = _statusService.GetInitialMatchStatus(profile);
+        }
+        else
+        {
+            InitialMatchStatus = await _statusService.GetInitialMatchStatusForAllAsync(ct);
+        }
         return Page();
     }
 
@@ -184,134 +233,198 @@ public class MatchReviewModel : PageModel
         return new JsonResult(status);
     }
 
-    public async Task<IActionResult> OnPostApproveAsync(CancellationToken ct)
+    public IActionResult OnGetApproveStatus(string requestId)
+    {
+        if (string.IsNullOrWhiteSpace(requestId)) return new JsonResult(null);
+        _cache.TryGetValue(GetApproveStatusCacheKey(requestId), out MatchPushStatus? status);
+        return new JsonResult(status);
+    }
+
+    public async Task<IActionResult> OnPostStartApproveAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
-        // Returning Page() from here re-renders the review table from posted values only. Without this the
-        // candidate dropdowns come back empty and the operator's selections look like they were discarded.
         RestoreCandidateOptions();
 
         var profile = await _db.SyncProfiles.FindAsync(SelectedProfileId);
         if (profile == null)
-        {
-            Message = "Profile not found.";
-            return Page();
-        }
+            return new JsonResult(new { success = false, message = "Profile not found." });
+
+        if (!BackupConfirmed)
+            return new JsonResult(new { success = false, message = "You must confirm that Command Centre has been backed up before applying the initial match." });
 
         if (Rows.Count == 0 || Rows.Any(r => string.IsNullOrWhiteSpace(r.Resolution)))
-        {
-            Message = "Resolve every record as Match, Create, or Exclude before confirming the initial match.";
-            return Page();
-        }
+            return new JsonResult(new { success = false, message = "Resolve every record as Match, Create, or Exclude before confirming the initial match." });
+
         if (Rows.Where(r => r.Resolution == "Match").GroupBy(r => r.CandidateHref).Any(g => string.IsNullOrWhiteSpace(g.Key) || g.Count() > 1))
-        {
-            Message = "Each matched Gallagher cardholder can only be assigned to one OnLocation record.";
-            return Page();
-        }
+            return new JsonResult(new { success = false, message = "Each matched Gallagher cardholder can only be assigned to one OnLocation record." });
+
         if (Rows.Any(r => r.Resolution == "Create") && string.IsNullOrWhiteSpace(profile.DefaultDivisionHref))
+            return new JsonResult(new { success = false, message = "Gallagher requires a division for every new cardholder. Choose a default division in the Defaults section of the Field Mapping page before creating cardholders." });
+
+        var requestId = string.IsNullOrWhiteSpace(ApproveRequestId) ? Guid.NewGuid().ToString("N") : ApproveRequestId;
+        var profileId = SelectedProfileId;
+        var rowsSnapshot = Rows.ToList();
+        var cacheKey = GetApproveStatusCacheKey(requestId);
+        _cache.Set(cacheKey, new MatchPushStatus { Total = rowsSnapshot.Count, Message = "Preparing to push changes to Gallagher..." }, TimeSpan.FromMinutes(30));
+
+        _ = Task.Run(async () => await ExecuteApproveAsync(profileId, rowsSnapshot, requestId), CancellationToken.None);
+
+        return new JsonResult(new { success = true, requestId });
+    }
+
+    private async Task ExecuteApproveAsync(string profileId, List<MatchRow> rows, string requestId)
+    {
+        try
         {
-            Message = "Gallagher requires a division for every new cardholder. Choose a default division in the Defaults section of the Field Mapping page before creating cardholders.";
-            return Page();
+            await using var scope = _services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<BridgeDbContext>();
+            var gallagher = scope.ServiceProvider.GetRequiredService<IGallagherConnector>();
+            var transform = scope.ServiceProvider.GetRequiredService<ITransformEngine>();
+            var cache = scope.ServiceProvider.GetRequiredService<IMemoryCache>();
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<MatchReviewModel>>();
+
+            var profile = await db.SyncProfiles.FindAsync(profileId);
+        if (profile == null)
+        {
+            cache.Set(GetApproveStatusCacheKey(requestId), new MatchPushStatus
+            {
+                IsComplete = true,
+                IsSuccess = false,
+                Message = "Profile not found."
+            }, TimeSpan.FromMinutes(30));
+            return;
         }
 
-        foreach (var row in Rows)
+        var pushStatus = new MatchPushStatus { Total = rows.Count, Message = "Preparing to push changes to Gallagher..." };
+        var cacheKey = GetApproveStatusCacheKey(requestId);
+        var errors = new List<string>();
+
+        void Report(string message, string? detail = null)
         {
-            var mapping = await _db.EntityMappings.FirstOrDefaultAsync(m => m.ProfileId == profile.Id && m.SourceType == profile.EntityType && m.SourceId == row.SourceId, ct)
+            pushStatus.Message = message;
+            pushStatus.Detail = detail ?? pushStatus.Detail;
+            cache.Set(cacheKey, pushStatus, TimeSpan.FromMinutes(30));
+        }
+
+        var correlationId = Guid.NewGuid().ToString("N");
+        for (var index = 0; index < rows.Count; index++)
+        {
+            var row = rows[index];
+            pushStatus.Processed = index + 1;
+            Report($"Processing {row.SourceDisplay}...", $"{pushStatus.Processed} of {pushStatus.Total}");
+
+            var mapping = await db.EntityMappings.FirstOrDefaultAsync(
+                    m => m.ProfileId == profile.Id && m.SourceType == profile.EntityType && m.SourceId == row.SourceId)
                 ?? new EntityMapping { ProfileId = profile.Id, SourceType = profile.EntityType, SourceId = row.SourceId };
 
-            if (row.Resolution == "Create")
+            try
             {
-                using var sourceDocument = JsonDocument.Parse(row.SourceJson);
-                var transformed = _transform.Transform(profile, sourceDocument.RootElement);
-                var payload = _transform.ApplyCreateDefaults(profile, await _transform.BuildCardholderPayloadAsync(transformed, null, ct));
-                var created = await _gallagher.CreateCardholderAsync(payload, ct);
-                if (!created.HasValue)
+                if (row.Resolution == "Create")
                 {
-                    // Cardholders created earlier in this loop already exist in Gallagher. Their mappings must
-                    // be saved before bailing out or the next attempt creates duplicates.
-                    await _db.SaveChangesAsync(ct);
-                    Message = $"Could not create a Gallagher cardholder for {row.SourceDisplay}: {await _gallagher.GetLastErrorAsync()}. Records resolved before this one have been saved; fix the problem and confirm again.";
-                    return Page();
+                    using var sourceDocument = JsonDocument.Parse(row.SourceJson);
+                    var transformed = transform.Transform(profile, sourceDocument.RootElement);
+                    var payload = transform.ApplyCreateDefaults(profile, await transform.BuildCardholderPayloadAsync(transformed, null, CancellationToken.None));
+                    var created = await gallagher.CreateCardholderAsync(payload, CancellationToken.None);
+                    if (!created.HasValue)
+                    {
+                        var error = await gallagher.GetLastErrorAsync();
+                        throw new InvalidOperationException($"Could not create cardholder for {row.SourceDisplay}: {error}");
+                    }
+                    mapping.GallagherHref = GetString(created.Value, "href") ?? string.Empty;
+                    mapping.GallagherId = GetString(created.Value, "id");
+                    mapping.Confidence = 1;
+                    mapping.ManualOverride = true;
+                    mapping.Excluded = false;
+                    pushStatus.Created++;
                 }
-                mapping.GallagherHref = GetString(created.Value, "href") ?? string.Empty;
-                mapping.GallagherId = GetString(created.Value, "id");
-                mapping.Confidence = 1;
-                mapping.ManualOverride = true;
-                mapping.Excluded = false;
+                else if (row.Resolution == "Exclude")
+                {
+                    mapping.GallagherHref = string.Empty;
+                    mapping.GallagherId = null;
+                    mapping.Confidence = 0;
+                    mapping.ManualOverride = true;
+                    mapping.Excluded = true;
+                    pushStatus.Excluded++;
+                }
+                else
+                {
+                    mapping.GallagherHref = row.CandidateHref ?? string.Empty;
+                    mapping.GallagherId = GetIdFromHref(row.CandidateHref) ?? row.CandidateId;
+                    mapping.Confidence = row.Confidence;
+                    mapping.ManualOverride = true;
+                    mapping.Excluded = false;
+                    pushStatus.Matched++;
+                }
             }
-            else if (row.Resolution == "Exclude")
+            catch (Exception ex)
             {
-                mapping.GallagherHref = string.Empty;
-                mapping.GallagherId = null;
-                mapping.Confidence = 0;
-                mapping.ManualOverride = true;
-                mapping.Excluded = true;
-            }
-            else
-            {
-                // CandidateId is posted from the originally suggested cardholder and goes stale the moment the
-                // operator picks a different one, so the id is taken from the href that was actually selected.
-                mapping.GallagherHref = row.CandidateHref ?? string.Empty;
-                mapping.GallagherId = GetIdFromHref(row.CandidateHref) ?? row.CandidateId;
-                mapping.Confidence = row.Confidence;
-                mapping.ManualOverride = true;
-                mapping.Excluded = false;
+                pushStatus.Failed++;
+                errors.Add(ex.Message);
+                Report($"Failed on {row.SourceDisplay}", ex.Message);
+                logger.LogError(ex, "Failed to apply initial match for {Source}", row.SourceId);
+                continue;
             }
 
             mapping.UpdatedAt = DateTimeOffset.UtcNow;
-            if (_db.Entry(mapping).State == EntityState.Detached) _db.EntityMappings.Add(mapping);
+            if (db.Entry(mapping).State == EntityState.Detached) db.EntityMappings.Add(mapping);
+
+            if (row.Resolution != "Exclude" && !string.IsNullOrWhiteSpace(row.SourceId) && !string.IsNullOrWhiteSpace(row.SourceJson))
+            {
+                var pending = await db.SyncJobs.FirstOrDefaultAsync(
+                    j => j.ProfileId == profile.Id && j.SourceId == row.SourceId && j.Status == "Pending");
+                if (pending != null)
+                {
+                    pending.PayloadJson = row.SourceJson;
+                    pending.UpdatedAt = DateTimeOffset.UtcNow;
+                }
+                else
+                {
+                    db.SyncJobs.Add(new SyncJob
+                    {
+                        ProfileId = profile.Id,
+                        SourceType = profile.EntityType,
+                        SourceId = row.SourceId,
+                        PayloadJson = row.SourceJson,
+                        Status = "Pending",
+                        CorrelationId = correlationId
+                    });
+                }
+            }
         }
 
         profile.InitialMatchCompleted = true;
         profile.InitialMatchCompletedAt = DateTimeOffset.UtcNow;
-        // InitialMatchCompleted only unblocks the profile inside the sync engine; the engine still filters on
-        // Enabled first. Without this the queued jobs sit untouched forever even though the page reports that
-        // automatic sync has been turned on.
         profile.Enabled = true;
-        await QueueInitialSyncAsync(profile, ct);
-        await _db.SaveChangesAsync(ct);
-
-        var matchedCount = Rows.Count(r => r.Resolution == "Match");
-        var createdCount = Rows.Count(r => r.Resolution == "Create");
-        var excludedCount = Rows.Count(r => r.Resolution == "Exclude");
-        TempData["Message"] = $"Initial Record Match confirmed for {profile.Id}: {matchedCount} matched, {createdCount} created, {excludedCount} excluded. Automatic sync is now enabled, and the mapped fields and competencies for the {matchedCount + createdCount} included record(s) have been queued; the sync engine applies them within a minute.";
-        _cache.Remove(GetCandidateOptionsCacheKey(profile.Id));
-        return RedirectToPage();
-    }
-
-    // Confirming the match only records which cardholder belongs to which OnLocation record. Without a job
-    // per record, matched cardholders keep their existing Gallagher data until something changes in
-    // OnLocation, so the mapped fields and competencies never arrive.
-    private async Task QueueInitialSyncAsync(SyncProfile profile, CancellationToken ct)
-    {
-        var correlationId = Guid.NewGuid().ToString("N");
-        foreach (var row in Rows.Where(r => r.Resolution != "Exclude"))
-        {
-            if (string.IsNullOrWhiteSpace(row.SourceId) || string.IsNullOrWhiteSpace(row.SourceJson)) continue;
-
-            var pending = await _db.SyncJobs.FirstOrDefaultAsync(
-                j => j.ProfileId == profile.Id && j.SourceId == row.SourceId && j.Status == "Pending", ct);
-            if (pending != null)
-            {
-                pending.PayloadJson = row.SourceJson;
-                pending.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-            else
-            {
-                _db.SyncJobs.Add(new SyncJob
-                {
-                    ProfileId = profile.Id,
-                    SourceType = profile.EntityType,
-                    SourceId = row.SourceId,
-                    PayloadJson = row.SourceJson,
-                    Status = "Pending",
-                    CorrelationId = correlationId
-                });
-            }
-        }
-
-        // The sync engine only processes profiles that are due, so bring this one forward.
         profile.NextRun = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(CancellationToken.None);
+
+        pushStatus.IsComplete = true;
+        pushStatus.IsSuccess = pushStatus.Failed == 0;
+        pushStatus.Errors = errors.Take(20).ToList();
+        if (pushStatus.IsSuccess)
+        {
+            pushStatus.Message = "Initial match applied successfully.";
+            pushStatus.Detail = $"{pushStatus.Matched} matched, {pushStatus.Created} created, {pushStatus.Excluded} excluded. Automatic sync is now enabled and queued jobs will push mapped fields/competencies.";
+        }
+        else
+        {
+            pushStatus.Message = $"Initial match completed with {pushStatus.Failed} failure(s).";
+            pushStatus.Detail = $"{pushStatus.Matched} matched, {pushStatus.Created} created, {pushStatus.Excluded} excluded, {pushStatus.Failed} failed. Fix the reported problem(s) and confirm again; rows already applied have been saved.";
+        }
+        cache.Set(cacheKey, pushStatus, TimeSpan.FromMinutes(30));
+        cache.Remove(GetCandidateOptionsCacheKey(profile.Id));
+        }
+        catch (Exception ex)
+        {
+            _cache.Set(GetApproveStatusCacheKey(requestId), new MatchPushStatus
+            {
+                IsComplete = true,
+                IsSuccess = false,
+                Message = "Initial match push failed unexpectedly.",
+                Detail = ex.Message
+            }, TimeSpan.FromMinutes(30));
+        }
     }
 
     private static string? GetIdFromHref(string? href)
@@ -579,6 +692,8 @@ public class MatchReviewModel : PageModel
 
     private static string GetPreviewStatusCacheKey(string requestId) => $"match-review-preview-status:{requestId}";
 
+    private static string GetApproveStatusCacheKey(string requestId) => $"match-review-approve-status:{requestId}";
+
     private static string? GetString(JsonElement element, params string[] names)
     {
         foreach (var name in names)
@@ -627,5 +742,20 @@ public class MatchReviewModel : PageModel
         public bool IsSuccess { get; set; } = true;
         public int? ProgressPercent { get; set; }
         public string? Detail { get; set; }
+    }
+
+    public class MatchPushStatus
+    {
+        public int Total { get; set; }
+        public int Processed { get; set; }
+        public int Matched { get; set; }
+        public int Created { get; set; }
+        public int Excluded { get; set; }
+        public int Failed { get; set; }
+        public bool IsComplete { get; set; }
+        public bool IsSuccess { get; set; }
+        public string Message { get; set; } = string.Empty;
+        public string Detail { get; set; } = string.Empty;
+        public List<string> Errors { get; set; } = new();
     }
 }

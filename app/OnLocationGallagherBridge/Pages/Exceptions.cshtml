@@ -36,7 +36,6 @@
             <div class="card-body">
                 <h6 class="text-muted">Waiting for a manual match</h6>
                 <div class="display-6">@Model.PendingManualMatches</div>
-                <a asp-page="/MatchReview">Resolve on Initial Record Match</a>
             </div>
         </div>
     </div>
@@ -134,4 +133,67 @@
             </table>
         </div>
     </div>
+}
+
+@if (Model.ManualMatches.Any())
+{
+    <h4 class="mt-4">Manual matches</h4>
+    <p class="text-muted">These records arrived during a sync with no linked Gallagher cardholder. Choose what to do for each one.</p>
+
+    @foreach (var row in Model.ManualMatches)
+    {
+        var detailId = $"manual-detail-{row.QueueId:N}";
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="row align-items-start">
+                    <div class="col-md-4">
+                        <h5 class="card-title mb-1">@row.Display</h5>
+                        <p class="small text-muted mb-0">OnLocation id @row.SourceId · Profile @row.ProfileId</p>
+                        @if (!string.IsNullOrWhiteSpace(row.CandidateHref))
+                        {
+                            <p class="small mt-2 mb-0">
+                                <strong>Suggested match:</strong> @row.CandidateDisplay
+                                @if (row.Confidence > 0)
+                                {
+                                    <span class="text-muted">(@row.Confidence.ToString("P0") — @row.Reason)</span>
+                                }
+                            </p>
+                        }
+                        else
+                        {
+                            <p class="small text-muted mt-2 mb-0">No strong match found in Gallagher.</p>
+                        }
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small" for="candidate-@row.QueueId">Match to existing cardholder</label>
+                        <select class="form-select form-select-sm" id="candidate-@row.QueueId" name="candidateHref" form="match-form-@row.QueueId">
+                            <option value="">-- select --</option>
+                            @foreach (var option in row.CandidateOptions)
+                            {
+                                <option value="@option.Value" selected="@option.Selected">@option.Text</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-3 text-md-end">
+                        <form method="post" id="create-form-@row.QueueId" asp-page-handler="ResolveCreate" class="d-inline">
+                            <input type="hidden" name="queueId" value="@row.QueueId" />
+                            <button type="submit" class="btn btn-sm btn-success mb-1">Create new</button>
+                        </form>
+                        <form method="post" id="match-form-@row.QueueId" asp-page-handler="ResolveMatch" class="d-inline">
+                            <input type="hidden" name="queueId" value="@row.QueueId" />
+                            <button type="submit" class="btn btn-sm btn-primary mb-1">Match selected</button>
+                        </form>
+                        <form method="post" asp-page-handler="ResolveIgnore" class="d-inline">
+                            <input type="hidden" name="queueId" value="@row.QueueId" />
+                            <button type="submit" class="btn btn-sm btn-outline-secondary mb-1">Ignore</button>
+                        </form>
+                    </div>
+                </div>
+                <button class="btn btn-sm btn-link ps-0 mt-2" type="button" data-bs-toggle="collapse" data-bs-target="#@detailId">Show OnLocation record</button>
+                <div class="collapse" id="@detailId">
+                    <pre class="bg-light p-2 small mt-2" style="max-height: 20rem; overflow: auto;">@row.SourceJson</pre>
+                </div>
+            </div>
+        </div>
+    }
 }

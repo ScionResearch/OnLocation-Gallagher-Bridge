@@ -3,6 +3,13 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace OnLocationGallagherBridge.Models;
 
+public enum UnmatchedAction
+{
+    ManualReview,
+    CreateNew,
+    Ignore
+}
+
 public class SyncProfile
 {
     [Key]
@@ -24,10 +31,14 @@ public class SyncProfile
     // Access groups new cardholders are added to. Serialised as [{"href":"...","name":"..."}].
     public string DefaultAccessGroupsJson { get; set; } = "[]";
     public bool AutoCreate { get; set; } = false;
+    public UnmatchedAction DefaultUnmatchedAction { get; set; } = UnmatchedAction.ManualReview;
     public bool InitialMatchCompleted { get; set; } = false;
     public DateTimeOffset? InitialMatchCompletedAt { get; set; }
     public DateTimeOffset? LastRun { get; set; }
     public DateTimeOffset? NextRun { get; set; }
+    // Field on the Gallagher cardholder to write sync-result messages to. Empty means no message is written.
+    // "description" writes to the cardholder description. "personalDataFields.<name>" writes to that PDF.
+    public string BridgeMessageTarget { get; set; } = string.Empty;
 }
 
 public class EntityMapping
@@ -105,6 +116,7 @@ public class ManualMatchQueue
     public double Confidence { get; set; }
     public string Status { get; set; } = "Pending"; // Pending, Approved, Rejected
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public class InductionCompetencyMap

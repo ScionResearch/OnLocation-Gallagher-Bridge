@@ -6,6 +6,9 @@ namespace OnLocationGallagherBridge.Models;
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(BridgeConfig))]
 [JsonSerializable(typeof(List<FieldMapDto>))]
+[JsonSerializable(typeof(FieldMapDto))]
+[JsonSerializable(typeof(List<FieldMapRuleDto>))]
+[JsonSerializable(typeof(FieldMapRuleDto))]
 [JsonSerializable(typeof(List<MatchRuleDto>))]
 internal partial class SourceGenerationContext : JsonSerializerContext
 {
@@ -17,6 +20,19 @@ public class FieldMapDto
     public string Target { get; set; } = string.Empty;
     public string Transform { get; set; } = "copy";
     public Dictionary<string, object>? Options { get; set; }
+    public string RuleLogic { get; set; } = "and";
+    public List<FieldMapRuleDto> Rules { get; set; } = new();
+    public string? RuleOutputSource { get; set; }
+    public string? RuleOutputValue { get; set; }
+    public bool RuleOutputIsNumber { get; set; }
+}
+
+public class FieldMapRuleDto
+{
+    public string Source { get; set; } = string.Empty;
+    public string Operator { get; set; } = "equals";
+    public string? Value { get; set; }
+    public bool ValueIsSource { get; set; }
 }
 
 public class MatchRuleDto

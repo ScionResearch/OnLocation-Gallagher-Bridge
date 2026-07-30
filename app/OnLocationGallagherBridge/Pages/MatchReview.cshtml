@@ -11,6 +11,8 @@
     <div class="alert alert-info">@Model.Message</div>
 }
 
+<partial name="_StatusBanner" model='new StatusBannerModel("Initial Record Match", Model.InitialMatchStatus)' />
+
 <form method="post">
     <div class="mb-3">
         <label class="form-label">Sync Profile</label>
@@ -85,7 +87,8 @@
 {
     <div class="card mt-3">
         <div class="card-body">
-            <h5 class="card-title">Totals</h5>
+            <h5 class="card-title">Review and confirm</h5>
+            <p class="small text-muted mb-3">Resolve every OnLocation record before confirming. Records that still need attention are shown at the top.</p>
             <div class="row row-cols-2 row-cols-md-4 g-3 text-center">
                 <div class="col">
                     <div class="fs-4 fw-semibold">@Model.Totals.OnLocationRecords</div>
@@ -96,38 +99,43 @@
                     <div class="small text-muted">Gallagher cardholders</div>
                 </div>
                 <div class="col">
-                    <div class="fs-4 fw-semibold">@Model.Totals.Reviewable</div>
-                    <div class="small text-muted">Records to review</div>
-                </div>
-                <div class="col">
                     <div class="fs-4 fw-semibold">@Model.Totals.SkippedNoName</div>
                     <div class="small text-muted">Skipped (no usable name)</div>
                 </div>
-                <div class="col">
-                    <div class="fs-4 fw-semibold text-success">@Model.Totals.AutoMatched</div>
-                    <div class="small text-muted">Automatically matched</div>
-                </div>
-                <div class="col">
-                    <div class="fs-4 fw-semibold text-info">@Model.Totals.NeedsConfirmation</div>
-                    <div class="small text-muted">Suggested, needs confirmation</div>
-                </div>
-                <div class="col">
-                    <div class="fs-4 fw-semibold text-warning">@Model.Totals.NoMatch</div>
-                    <div class="small text-muted">No match found</div>
-                </div>
-                <div class="col">
-                    <div class="fs-4 fw-semibold">@Model.Totals.Unresolved</div>
-                    <div class="small text-muted">Still unresolved</div>
-                </div>
+                @if (Model.Rows.Any())
+                {
+                    <div class="col">
+                        <div class="fs-4 fw-semibold text-danger" id="summaryUnresolved">@Model.Rows.Count(r => string.IsNullOrWhiteSpace(r.Resolution))</div>
+                        <div class="small text-muted">Need attention</div>
+                    </div>
+                    <div class="col">
+                        <div class="fs-4 fw-semibold text-success" id="summaryMatched">@Model.Rows.Count(r => r.Resolution == "Match")</div>
+                        <div class="small text-muted">Match</div>
+                    </div>
+                    <div class="col">
+                        <div class="fs-4 fw-semibold" id="summaryCreated">@Model.Rows.Count(r => r.Resolution == "Create")</div>
+                        <div class="small text-muted">Create</div>
+                    </div>
+                    <div class="col">
+                        <div class="fs-4 fw-semibold" id="summaryExcluded">@Model.Rows.Count(r => r.Resolution == "Exclude")</div>
+                        <div class="small text-muted">Exclude</div>
+                    </div>
+                }
             </div>
+            @if (Model.Rows.Any())
+            {
+                <div id="readyMessage" class="alert alert-success mt-3 mb-0 d-none">All records have a solution. You can now confirm and enable sync.</div>
+                <div class="mt-3 d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-primary" id="openConfirmModal" disabled>Confirm initial match and enable sync</button>
+                    <span id="confirmHint" class="small text-muted">Resolve every record before confirming.</span>
+                </div>
+            }
         </div>
     </div>
 }
 
 @if (Model.Rows.Any())
 {
-    <h4 class="mt-4">Review and confirm</h4>
-    <p>Resolve every OnLocation record before confirming. Unmatched and review-required records are shown first.</p>
     <div class="alert alert-light border d-flex align-items-end gap-3">
         <div>
             <label class="form-label" for="applyGlobalResolution">Apply default to unresolved records</label>
@@ -139,6 +147,9 @@
         </div>
         <button class="btn btn-outline-secondary" type="button" id="applyGlobalResolutionButton">Apply</button>
     </div>
+}
+@if (Model.Rows.Any())
+{
     <table class="table table-sm table-striped">
         <thead>
             <tr>
@@ -150,7 +161,7 @@
             </tr>
         </thead>
         <tbody>
-            @foreach (var i in Enumerable.Range(0, Model.Rows.Count).OrderBy(i => Model.Rows[i].CandidateHref is not null && !Model.Rows[i].RequiresReview ? 1 : 0))
+            @foreach (var i in Enumerable.Range(0, Model.Rows.Count).OrderBy(i => Model.Rows[i].CandidateHref is not null && !Model.Rows[i].RequiresReview ? 2 : string.IsNullOrWhiteSpace(Model.Rows[i].Resolution) ? 0 : 1))
             {
                 <tr class="@(Model.Rows[i].CandidateHref is null ? "table-warning" : Model.Rows[i].RequiresReview ? "table-info" : "")">
                     <td>
@@ -212,8 +223,72 @@
             }
         </tbody>
     </table>
-    <button type="submit" class="btn btn-primary" formaction="/MatchReview?handler=Approve">Confirm initial match and enable sync</button>
+    <input type="hidden" asp-for="ApproveRequestId" id="approveRequestId" />
+
+    <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="confirmModalLabel">Confirm initial record match</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>This action will write changes to Gallagher Command Centre that can be difficult to reverse:</p>
+                    <ul>
+                        <li><span id="confirmMatched" class="fw-semibold">0</span> existing cardholder(s) will be linked and queued for sync.</li>
+                        <li><span id="confirmCreated" class="fw-semibold">0</span> new cardholder(s) will be created immediately.</li>
+                        <li><span id="confirmExcluded" class="fw-semibold">0</span> record(s) will be excluded from sync.</li>
+                    </ul>
+                    <div class="alert alert-warning">
+                        <strong>Back up your Gallagher Command Centre configuration before continuing.</strong> Creating new cardholders and linking existing records is not easily undone.
+                    </div>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="BackupConfirmed" id="backupConfirmed" />
+                        <label class="form-check-label" for="backupConfirmed">I confirm that Command Centre has been backed up and I want to proceed.</label>
+                    </div>
+                    <div id="backupError" class="text-danger small mt-2 d-none">You must confirm the backup before proceeding.</div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-danger" id="confirmApproveButton">Confirm and enable sync</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-3 d-none" id="pushProgress">
+        <div class="card-body">
+            <div class="d-flex align-items-center gap-2">
+                <div class="spinner-border spinner-border-sm" role="status" id="pushSpinner"></div>
+                <span id="pushComplete" class="badge rounded-pill d-none"></span>
+                <div>
+                    <strong id="pushStatus">Preparing to push changes to Gallagher</strong>
+                    <div id="pushDetail" class="text-muted small"></div>
+                </div>
+            </div>
+            <div class="progress mt-3"><div class="progress-bar" id="pushProgressBar" style="width: 0%"></div></div>
+        </div>
+    </div>
+
     <template id="candidateOptions">@foreach (var option in Model.CandidateOptions){<option value="@option.Value">@option.Text</option>}</template>
+}
+@if (Model.PushStatus is not null)
+{
+    <div class="card mt-3">
+        <div class="card-body">
+            <h5 class="card-title">@(Model.PushStatus.IsSuccess ? "Initial match applied" : "Initial match completed with failures")</h5>
+            <p>@Model.PushStatus.Detail</p>
+            @if (Model.PushStatus.Errors.Any())
+            {
+                <ul class="small text-danger">
+                @foreach (var error in Model.PushStatus.Errors)
+                {
+                    <li>@error</li>
+                }
+                </ul>
+            }
+        </div>
+    </div>
 }
 </form>
 
@@ -326,9 +401,156 @@
                 const resolution = document.getElementById('applyGlobalResolution').value;
                 if (!resolution) return;
                 document.querySelectorAll('select[name$=".Resolution"]').forEach(select => {
-                    if (!select.value) select.value = resolution;
+                    if (!select.value) {
+                        select.value = resolution;
+                        select.dispatchEvent(new Event('change'));
+                    }
                 });
             });
+
+            // Live summary and confirm-button enablement
+            const resolutionSelects = document.querySelectorAll('select[name$=".Resolution"]');
+            const confirmButton = document.getElementById('openConfirmModal');
+            const confirmHint = document.getElementById('confirmHint');
+            const summaryUnresolved = document.getElementById('summaryUnresolved');
+            const summaryMatched = document.getElementById('summaryMatched');
+            const summaryCreated = document.getElementById('summaryCreated');
+            const summaryExcluded = document.getElementById('summaryExcluded');
+            const readyMessage = document.getElementById('readyMessage');
+
+            const updateSummary = () => {
+                const rows = Array.from(resolutionSelects);
+                const counts = { Match: 0, Create: 0, Exclude: 0 };
+                let unresolved = 0;
+                rows.forEach(select => {
+                    if (select.value) counts[select.value] = (counts[select.value] || 0) + 1;
+                    else unresolved++;
+                });
+                summaryMatched.textContent = counts.Match || 0;
+                summaryCreated.textContent = counts.Create || 0;
+                summaryExcluded.textContent = counts.Exclude || 0;
+                summaryUnresolved.textContent = unresolved;
+                const allResolved = unresolved === 0;
+                if (confirmButton) confirmButton.disabled = !allResolved;
+                if (confirmHint) confirmHint.classList.toggle('d-none', allResolved);
+                if (readyMessage) readyMessage.classList.toggle('d-none', !allResolved);
+            };
+
+            resolutionSelects.forEach(select => select.addEventListener('change', updateSummary));
+            updateSummary();
+
+            // Initial match confirmation modal and push progress
+            const openConfirmModal = document.getElementById('openConfirmModal');
+            const confirmModal = document.getElementById('confirmModal');
+            const confirmApproveButton = document.getElementById('confirmApproveButton');
+            const backupConfirmed = document.getElementById('backupConfirmed');
+            const backupError = document.getElementById('backupError');
+            const approveRequestId = document.getElementById('approveRequestId');
+            const pushProgress = document.getElementById('pushProgress');
+            const pushStatus = document.getElementById('pushStatus');
+            const pushDetail = document.getElementById('pushDetail');
+            const pushProgressBar = document.getElementById('pushProgressBar');
+            const pushSpinner = document.getElementById('pushSpinner');
+            const pushComplete = document.getElementById('pushComplete');
+            let pushPollTimer;
+
+            const updatePushStatus = status => {
+                const isComplete = status.isComplete;
+                pushSpinner.classList.toggle('d-none', isComplete);
+                pushComplete.classList.toggle('d-none', !isComplete);
+                pushComplete.classList.toggle('text-bg-success', isComplete && status.isSuccess);
+                pushComplete.classList.toggle('text-bg-danger', isComplete && !status.isSuccess);
+                pushComplete.textContent = isComplete ? (status.isSuccess ? '✓' : '!') : '';
+                pushStatus.textContent = status.message;
+                pushDetail.textContent = status.detail || '';
+                const percent = status.total > 0 ? (status.processed / status.total * 100) : 0;
+                pushProgressBar.style.width = `${percent}%`;
+            };
+
+            if (openConfirmModal && confirmModal) {
+                openConfirmModal.addEventListener('click', () => {
+                    const rows = Array.from(document.querySelectorAll('select[name$=".Resolution"]'));
+                    const counts = { Match: 0, Create: 0, Exclude: 0 };
+                    rows.forEach(select => {
+                        if (select.value) counts[select.value] = (counts[select.value] || 0) + 1;
+                    });
+                    document.getElementById('confirmMatched').textContent = counts.Match || 0;
+                    document.getElementById('confirmCreated').textContent = counts.Create || 0;
+                    document.getElementById('confirmExcluded').textContent = counts.Exclude || 0;
+                    backupError.classList.add('d-none');
+                    const modal = bootstrap.Modal.getInstance(confirmModal) || new bootstrap.Modal(confirmModal);
+                    modal.show();
+                });
+            }
+
+            if (confirmApproveButton) {
+                confirmApproveButton.addEventListener('click', async () => {
+                    if (!backupConfirmed.checked) {
+                        backupError.classList.remove('d-none');
+                        return;
+                    }
+                    backupError.classList.add('d-none');
+                    confirmApproveButton.disabled = true;
+                    const modal = bootstrap.Modal.getInstance(confirmModal);
+                    modal?.hide();
+                    const requestId = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+                    approveRequestId.value = requestId;
+                    pushProgress.classList.remove('d-none');
+                    pushSpinner.classList.remove('d-none');
+                    pushComplete.classList.add('d-none');
+
+                    const profileId = document.getElementById('SelectedProfileId')?.value ?? '';
+                    const token = form.querySelector('input[name="__RequestVerificationToken"]')?.value;
+                    const formData = new FormData(form);
+                    formData.set('handler', 'StartApprove');
+                    formData.set(approveRequestId.name, requestId);
+
+                    let started = false;
+                    try {
+                        const response = await fetch('/MatchReview?handler=StartApprove', {
+                            method: 'POST',
+                            body: formData,
+                            headers: token ? { 'RequestVerificationToken': token } : {}
+                        });
+                        if (response.ok) {
+                            const result = await response.json();
+                            if (result.success) {
+                                started = true;
+                            } else {
+                                pushStatus.textContent = result.message || 'Could not start approval.';
+                                pushSpinner.classList.add('d-none');
+                                pushComplete.classList.remove('d-none');
+                                pushComplete.classList.add('text-bg-danger');
+                                pushComplete.textContent = '!';
+                            }
+                        } else {
+                            pushStatus.textContent = 'Server returned an error when starting approval.';
+                            pushSpinner.classList.add('d-none');
+                        }
+                    } catch (err) {
+                        pushStatus.textContent = 'Failed to start approval: ' + err;
+                        pushSpinner.classList.add('d-none');
+                    }
+
+                    if (!started) return;
+
+                    const pollStatus = async () => {
+                        try {
+                            const response = await fetch(`/MatchReview?handler=ApproveStatus&requestId=${encodeURIComponent(requestId)}`);
+                            if (response.ok) {
+                                const status = await response.json();
+                                if (status) updatePushStatus(status);
+                                if (status && status.isComplete) {
+                                    window.clearInterval(pushPollTimer);
+                                    window.location.href = `/MatchReview?pushRequestId=${encodeURIComponent(requestId)}&profileId=${encodeURIComponent(profileId)}`;
+                                }
+                            }
+                        } catch { }
+                    };
+                    pollStatus();
+                    pushPollTimer = window.setInterval(pollStatus, 750);
+                });
+            }
         })();
     </script>
 }

@@ -14,14 +14,16 @@ public class IndexModel : PageModel
     private readonly IGallagherConnector _gallagher;
     private readonly IAuditService _audit;
     private readonly ISyncActivity _activity;
+    private readonly IConfigurationStatusService _statusService;
 
-    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit, ISyncActivity activity)
+    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit, ISyncActivity activity, IConfigurationStatusService statusService)
     {
         _db = db;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _audit = audit;
         _activity = activity;
+        _statusService = statusService;
     }
 
     public List<SyncProfile> Profiles { get; set; } = new();
@@ -33,6 +35,9 @@ public class IndexModel : PageModel
     public IReadOnlyList<AuditLog> RecentAudit { get; set; } = Array.Empty<AuditLog>();
     public string? Message { get; set; }
     public SyncActivitySnapshot Activity { get; set; } = new();
+    public ConfigurationState OverallStatus { get; set; } = new(ConfigurationStatus.NotConfigured, ConfigurationStatus.NotConfigured, ConfigurationStatus.NotConfigured, ConfigurationStatus.NotConfigured);
+    public Dictionary<string, ConfigurationStatus> ProfileMappingStatus { get; set; } = new();
+    public Dictionary<string, ConfigurationStatus> ProfileInitialMatchStatus { get; set; } = new();
 
     // Anything from once a minute to once a month, which is the range operators asked for. Stored as minutes on
     // the profile so the sync engine needs no changes.
@@ -59,11 +64,22 @@ public class IndexModel : PageModel
     public async Task OnGetAsync(CancellationToken ct)
     {
         Profiles = await _db.SyncProfiles.AsNoTracking().ToListAsync(ct);
+        foreach (var p in Profiles)
+        {
+            ProfileMappingStatus[p.Id] = _statusService.GetFieldMappingStatus(p);
+            ProfileInitialMatchStatus[p.Id] = _statusService.GetInitialMatchStatus(p);
+        }
         PendingJobs = await _db.SyncJobs.CountAsync(j => j.Status == "Pending", ct);
         FailedJobs = await _db.SyncJobs.CountAsync(j => j.Status == "Failed", ct);
         ManualMatches = await _db.ManualMatchQueues.CountAsync(m => m.Status == "Pending", ct);
         OnLocationOk = await _onLocation.TestConnectionAsync(ct);
         GallagherOk = await _gallagher.TestConnectionAsync(ct);
+        OverallStatus = await _statusService.GetOverallStateAsync(testConnections: false, ct);
+        if (OverallStatus.ConnectorSettings == ConfigurationStatus.Complete && (!OnLocationOk || !GallagherOk))
+        {
+            var overall = new[] { ConfigurationStatus.Faulty, OverallStatus.FieldMapping, OverallStatus.InitialMatch }.Min();
+            OverallStatus = OverallStatus with { ConnectorSettings = ConfigurationStatus.Faulty, Overall = overall };
+        }
         RecentAudit = await _audit.GetRecentAsync(20);
         Activity = _activity.Snapshot;
         if (TempData["Message"] is string message) Message = message;

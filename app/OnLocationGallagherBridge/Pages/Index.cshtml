@@ -14,9 +14,35 @@
     <div class="alert alert-info">@Model.Message</div>
 }
 
+<div class="row g-3 mb-3">
+    <div class="col-12">
+        <div class="card h-100">
+            <div class="card-body">
+                <h5 class="card-title">Health</h5>
+                <p class="mb-1">
+                    <strong>Overall:</strong> <partial name="_ConfigurationStatus" model="Model.OverallStatus.Overall" />
+                </p>
+                <ul class="list-inline mb-3 small">
+                    <li class="list-inline-item">Connector settings: <partial name="_ConfigurationStatus" model="Model.OverallStatus.ConnectorSettings" /></li>
+                    <li class="list-inline-item">Field mapping: <partial name="_ConfigurationStatus" model="Model.OverallStatus.FieldMapping" /></li>
+                    <li class="list-inline-item">Initial record match: <partial name="_ConfigurationStatus" model="Model.OverallStatus.InitialMatch" /></li>
+                </ul>
+                <div class="row">
+                    <div class="col-md-6">
+                        <p class="card-text mb-0">OnLocation: <span class="badge bg-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
+                    </div>
+                    <div class="col-md-6">
+                        <p class="card-text mb-0">Gallagher: <span class="badge bg-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row g-3">
     <div class="col-md-8">
-        <div class="card">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">Profiles</h5>
                 <ul class="list-group list-group-flush">
@@ -27,6 +53,14 @@
                                 <span>
                                     <strong>@p.Id</strong>
                                     <span class="badge bg-@(p.Enabled ? "success" : "secondary") ms-2">@(p.Enabled ? "on" : "off")</span>
+                                    @if (Model.ProfileMappingStatus.TryGetValue(p.Id, out var mappingStatus))
+                                    {
+                                        <span class="ms-1"><partial name="_ConfigurationStatus" model="mappingStatus" /></span>
+                                    }
+                                    @if (Model.ProfileInitialMatchStatus.TryGetValue(p.Id, out var initialStatus))
+                                    {
+                                        <span class="ms-1"><partial name="_ConfigurationStatus" model="initialStatus" /></span>
+                                    }
                                     @if (!p.InitialMatchCompleted)
                                     {
                                         <small class="d-block text-muted">Initial match not confirmed</small>
@@ -65,7 +99,7 @@
         </div>
     </div>
     <div class="col-md-4">
-        <div class="card">
+        <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">Queue</h5>
                 <p class="card-text">Pending: <strong>@Model.PendingJobs</strong></p>
@@ -83,15 +117,6 @@
                         <a asp-page="/MatchReview" class="ms-2">Resolve</a>
                     }
                 </p>
-            </div>
-        </div>
-    </div>
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-body">
-                <h5 class="card-title">Health</h5>
-                <p class="card-text">OnLocation: <span class="badge bg-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
-                <p class="card-text">Gallagher: <span class="badge bg-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
             </div>
         </div>
     </div>

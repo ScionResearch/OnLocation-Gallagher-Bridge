@@ -269,6 +269,10 @@ Before a profile can sync, an operator runs the initial match from the **Initial
 6. Approved matches create `EntityMapping` rows with `ManualOverride = true`.
 7. Excluded records create mappings with `Excluded = true` and are never sent to Gallagher.
 
+Before any changes are written to Command Centre, the operator must confirm a summary of the changes: how many existing cardholders will be linked, how many new cardholders will be created, and how many records will be excluded. A checkbox requires confirmation that Command Centre has been backed up, because creating cardholders and linking existing records is not easily reversed.
+
+While the approval is applied, a live progress bar shows how many records have been processed. The result card then reports the number matched, created, excluded, and any failures with their error messages, so the operator knows exactly what changed before routine incremental sync begins.
+
 Once all records are resolved, the profile's `InitialMatchCompleted` flag is set and the sync engine begins routine polling.
 
 ### Phase 2: Routine Sync
@@ -307,10 +311,25 @@ The `SyncWindowDays` setting (configurable per profile, default 7) bounds the fi
 
 Field maps are configured per profile on the **Field Mapping** page. Each mapping row specifies:
 
-- **Source field** — a dot-path into the OnLocation record (e.g. `email`, `first_name`, `inductions.123.completed`).
+- **Source field** — a dot-path into the OnLocation record (e.g. `email`, `first_name`, `inductions.123.completed`). Optional when the transform is *Rule based*.
 - **Target field** — the Gallagher cardholder field name (e.g. `firstName`, `lastName`, `@EmployeeId` for a personal data field).
 - **Transform** — one of the transforms listed in the [Transform Engine](#transform-engine) section.
 - **Options** — transform-specific parameters (lookup table, date format, static value, condition rules, concat fields/separator).
+
+### Rule-based transforms
+
+A field map can use a **Rule based** transform to decide whether a value is written to the target field. For each rule-based map you can:
+
+- Set the overall logic to **AND** (every rule must match) or **OR** (any rule can match).
+- Add up to 10 rules. Each rule evaluates an OnLocation source field with an operator:
+  - `equals`, `does not equal`
+  - `contains`, `does not contain`
+  - `greater than`, `less than` (numeric comparison)
+  - `exists` (source field is present and not null)
+- Compare the source field against either a constant or another OnLocation source field.
+- Choose the output as either a constant value (string or number) or another OnLocation source field.
+
+If no rule evaluates true, the target field is omitted from the Gallagher payload. This is useful for defaulting values such as a personal data field "Cardholder Type" to `Contractor`, or bucketing IDs into ranges.
 
 The mapping UI discovers available Gallagher fields (cardholder fields, personal data fields, competencies) and OnLocation fields dynamically, so the operator builds the map from real field names rather than typing them.
 
@@ -368,7 +387,7 @@ The web UI is served at `http://localhost:5000` and provides the following pages
 |------|---------|
 | **Dashboard** (`/Index`) | Profile list with enable/disable toggles, schedule controls (interval + sync window), live sync activity indicator, and recent audit feed. |
 | **Connector Settings** (`/Settings`) | OnLocation and Gallagher connection configuration, SMTP alert settings, connection tests, and testing reset controls. |
-| **Field Mapping** (`/Mapping`) | Configure source-to-target field maps per profile, including induction selection, competency mapping, division and access group defaults. |
+| **Field Mapping** (`/Mapping`) | Configure source-to-target field maps per profile, including rule-based transforms, induction selection, competency mapping, division/access group defaults, and the bridge sync-message target field. |
 | **Initial Record Match** (`/MatchReview`) | Run the initial match, review candidate cardholders, approve/reject/create/exclude each record. |
 | **Manual Sync** (`/ManualSync`) | Trigger an immediate sync of one or all profiles outside the normal schedule. Reports progress to the same live activity indicator. |
 | **Exceptions** (`/Exceptions`) | View failed sync jobs grouped by error, with retry, rematch, and dismiss actions. |
@@ -414,6 +433,7 @@ All credentials and settings are stored in an encrypted JSON file (see [Config S
 - **Enabled** — toggle sync on/off.
 - **Polling Interval** — 1 minute to 1 month (configurable from the dashboard).
 - **Sync Window Days** — how far back the induction holder scan looks for completed inductions (default 7).
+- **Bridge Sync Message Target** — the Gallagher cardholder field (description or a personal data field) to write timestamped `Created by OnLocation Bridge` / `Updated by OnLocation Bridge` messages into. Leave empty to leave cardholder fields untouched.
 
 ---
 

@@ -11,6 +11,8 @@
     <div class="alert alert-info">@Model.Message</div>
 }
 
+<partial name="_StatusBanner" model='new StatusBannerModel("Connector Settings", Model.ConnectorStatus)' />
+
 <form method="post">
     <h5>OnLocation</h5>
     <div class="mb-3">

@@ -14,24 +14,28 @@ public class SettingsModel : PageModel
     private readonly IOnLocationConnector _onLocation;
     private readonly IGallagherConnector _gallagher;
     private readonly BridgeDbContext _db;
+    private readonly IConfigurationStatusService _statusService;
 
     [BindProperty, Microsoft.AspNetCore.Mvc.ModelBinding.Validation.ValidateNever]
     public BridgeConfig Config { get; set; } = new();
 
     public string? Message { get; set; }
     public string ConfigFilePath => _config.ConfigFilePath;
+    public ConfigurationStatus ConnectorStatus { get; set; }
 
-    public SettingsModel(ConfigService config, IOnLocationConnector onLocation, IGallagherConnector gallagher, BridgeDbContext db)
+    public SettingsModel(ConfigService config, IOnLocationConnector onLocation, IGallagherConnector gallagher, BridgeDbContext db, IConfigurationStatusService statusService)
     {
         _config = config;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _db = db;
+        _statusService = statusService;
     }
 
-    public void OnGet()
+    public async Task OnGetAsync(CancellationToken ct)
     {
         Config = _config.GetConfig();
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: true, ct);
     }
 
     private void LogModelStateErrors()
@@ -51,6 +55,7 @@ public class SettingsModel : PageModel
         LogModelStateErrors();
         await _config.SaveAsync(Config);
         Message = "Settings saved and encrypted.";
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
         return Page();
     }
 
@@ -64,6 +69,9 @@ public class SettingsModel : PageModel
             await _config.SaveAsync(Config);
         }
         Message = ok ? "OnLocation connection OK" : $"OnLocation connection failed: {await _onLocation.GetLastErrorAsync()}";
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
+        if (!ok && ConnectorStatus == ConfigurationStatus.Complete)
+            ConnectorStatus = ConfigurationStatus.Faulty;
         return Page();
     }
 
@@ -77,6 +85,9 @@ public class SettingsModel : PageModel
             await _config.SaveAsync(Config);
         }
         Message = ok ? "Gallagher connection OK" : $"Gallagher connection failed: {await _gallagher.GetLastErrorAsync()}";
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
+        if (!ok && ConnectorStatus == ConfigurationStatus.Complete)
+            ConnectorStatus = ConfigurationStatus.Faulty;
         return Page();
     }
 
@@ -105,6 +116,8 @@ public class SettingsModel : PageModel
         Message = $"Cleared {jobs} job(s), {mappings} mapping(s), {manual} manual match row(s), {bookmarks} bookmark(s) and {audit} audit entr(ies). "
                 + "Every profile is now disabled and awaiting a fresh initial match. Field mapping and credentials were kept.";
         Log.Warning("Sync data reset from the Settings page: {Message}", Message);
+        Config = _config.GetConfig();
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
         return Page();
     }
 
@@ -126,15 +139,18 @@ public class SettingsModel : PageModel
 
         Message = "Cleared all sync data, and reset the field mapping, match rules, induction selection and creation defaults on every profile.";
         Log.Warning("Profile configuration reset from the Settings page");
+        Config = _config.GetConfig();
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
         return Page();
     }
 
-    public IActionResult OnPostClearCredentials()
+    public async Task<IActionResult> OnPostClearCredentials()
     {
         _config.Delete();
         Config = _config.GetConfig();
         Message = "Deleted the encrypted connector settings. Both connections must be configured and tested again.";
         Log.Warning("Connector credentials deleted from the Settings page");
+        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
         return Page();
     }
 }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Html;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.Rendering;
@@ -6,6 +7,8 @@ using Microsoft.Extensions.Caching.Memory;
 using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
 using OnLocationGallagherBridge.Services;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 
 namespace OnLocationGallagherBridge.Pages;
@@ -16,13 +19,15 @@ public class MappingModel : PageModel
     private readonly IOnLocationConnector _onLocation;
     private readonly IGallagherConnector _gallagher;
     private readonly IMemoryCache _cache;
+    private readonly IConfigurationStatusService _statusService;
 
-    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache)
+    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache, IConfigurationStatusService statusService)
     {
         _db = db;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _cache = cache;
+        _statusService = statusService;
     }
 
     [BindProperty(SupportsGet = true)]
@@ -41,6 +46,12 @@ public class MappingModel : PageModel
     [BindProperty]
     public MatchRuleDto PrimaryMatch { get; set; } = new();
 
+    [BindProperty]
+    public string BridgeMessageTarget { get; set; } = string.Empty;
+
+    [BindProperty]
+    public string DefaultUnmatchedAction { get; set; } = nameof(UnmatchedAction.ManualReview);
+
     private string _defaultDivisionHref = string.Empty;
 
     [BindProperty]
@@ -53,6 +64,7 @@ public class MappingModel : PageModel
     [BindProperty]
     public List<string> DefaultAccessGroupHrefs { get; set; } = new();
 
+    public List<GallagherReference> SavedAccessGroups { get; set; } = new();
     public List<GallagherReference> DivisionOptions { get; set; } = new();
     public List<GallagherReference> AccessGroupOptions { get; set; } = new();
 
@@ -71,6 +83,7 @@ public class MappingModel : PageModel
     public List<string> SourceInductionFields { get; set; } = new();
     public Dictionary<string, string?> SourceInductionFieldExamples { get; set; } = new();
     public string? Message { get; set; }
+    public ConfigurationStatus FieldMappingStatus { get; set; }
 
     [BindProperty]
     public string? LoadRequestId { get; set; }
@@ -83,14 +96,16 @@ public class MappingModel : PageModel
         if (string.IsNullOrWhiteSpace(SelectedProfileId)) return;
 
         await LoadProfilesAsync(ct);
-        await LoadProfileAsync();
+        var profile = await LoadProfileAsync();
+        FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
         LoadCachedSamples();
     }
 
     public async Task<IActionResult> OnPostLoadAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
-        await LoadProfileAsync();
+        var profile = await LoadProfileAsync();
+        FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
         await LoadSamplesAsync(ct, LoadRequestId);
         return Page();
     }
@@ -113,12 +128,31 @@ public class MappingModel : PageModel
         }
 
         var fieldMaps = FieldMaps
-            .Where(f => !string.IsNullOrWhiteSpace(f.Source) && !string.IsNullOrWhiteSpace(f.Target))
+            .Where(f => !string.IsNullOrWhiteSpace(f.Target)
+                && (!string.IsNullOrWhiteSpace(f.Source)
+                    || string.Equals(f.Transform, "rule-based", StringComparison.OrdinalIgnoreCase)
+                    || (f.Rules ?? new List<FieldMapRuleDto>()).Any(r => !string.IsNullOrWhiteSpace(r.Source))))
             .Select(f => new FieldMapDto
             {
                 Source = f.Source.Trim(),
                 Target = f.Target.Trim(),
-                Transform = string.IsNullOrWhiteSpace(f.Transform) ? "copy" : f.Transform.Trim()
+                Transform = (f.Rules ?? new List<FieldMapRuleDto>()).Any(r => !string.IsNullOrWhiteSpace(r.Source))
+                    ? "rule-based"
+                    : string.IsNullOrWhiteSpace(f.Transform) ? "copy" : f.Transform.Trim(),
+                RuleLogic = string.IsNullOrWhiteSpace(f.RuleLogic) ? "and" : f.RuleLogic.Trim().ToLowerInvariant(),
+                Rules = (f.Rules ?? new List<FieldMapRuleDto>())
+                    .Where(r => !string.IsNullOrWhiteSpace(r.Source))
+                    .Select(r => new FieldMapRuleDto
+                    {
+                        Source = r.Source.Trim(),
+                        Operator = string.IsNullOrWhiteSpace(r.Operator) ? "equals" : r.Operator.Trim().ToLowerInvariant(),
+                        Value = r.Value?.Trim(),
+                        ValueIsSource = r.ValueIsSource
+                    })
+                    .ToList(),
+                RuleOutputSource = f.RuleOutputSource?.Trim(),
+                RuleOutputValue = f.RuleOutputValue?.Trim(),
+                RuleOutputIsNumber = f.RuleOutputIsNumber
             })
             .ToList();
 
@@ -152,10 +186,14 @@ public class MappingModel : PageModel
         profile.FieldMapJson = JsonSerializer.Serialize(fieldMaps);
         profile.MatchRulesJson = JsonSerializer.Serialize(matchRules);
         SaveCreateDefaults(profile);
+        profile.BridgeMessageTarget = BridgeMessageTarget ?? string.Empty;
+        if (Enum.TryParse<UnmatchedAction>(DefaultUnmatchedAction, ignoreCase: true, out var unmatchedAction))
+            profile.DefaultUnmatchedAction = unmatchedAction;
         await _db.SaveChangesAsync(ct);
 
         Message = "Mapping and match rules saved.";
-        await LoadProfileAsync();
+        var reloadedProfile = await LoadProfileAsync();
+        FieldMappingStatus = _statusService.GetFieldMappingStatus(reloadedProfile);
         LoadCachedSamples();
         return Page();
     }
@@ -164,7 +202,6 @@ public class MappingModel : PageModel
     private void SaveCreateDefaults(SyncProfile profile)
     {
         LoadCachedSamples();
-        var existingGroups = TransformEngine.ParseReferences(profile.DefaultAccessGroupsJson);
 
         if (string.IsNullOrWhiteSpace(DefaultDivisionHref))
         {
@@ -183,7 +220,7 @@ public class MappingModel : PageModel
             .Select(href => new GallagherReference
             {
                 Href = href,
-                Name = NameFor(AccessGroupOptions, href) ?? NameFor(existingGroups, href) ?? href
+                Name = NameFor(AccessGroupOptions, href) ?? NameFor(SavedAccessGroups, href) ?? href
             })
             .ToList());
     }
@@ -193,7 +230,7 @@ public class MappingModel : PageModel
 
     public IEnumerable<GallagherReference> SelectedAccessGroupsNotListed() => DefaultAccessGroupHrefs
         .Where(href => !string.IsNullOrWhiteSpace(href) && NameFor(AccessGroupOptions, href) == null)
-        .Select(href => new GallagherReference { Href = href, Name = href });
+        .Select(href => new GallagherReference { Href = href, Name = NameFor(SavedAccessGroups, href) ?? href });
 
     public bool DefaultDivisionIsListed => string.IsNullOrWhiteSpace(DefaultDivisionHref)
         || NameFor(DivisionOptions, DefaultDivisionHref) != null;
@@ -204,8 +241,9 @@ public class MappingModel : PageModel
         ProfileOptions = profiles.Select(p => new SelectListItem(p.Id, p.Id, p.Id == SelectedProfileId)).ToList();
     }
 
-    private async Task LoadProfileAsync()
+    private async Task<SyncProfile?> LoadProfileAsync()
     {
+        SyncProfile? profile = null;
         if (string.IsNullOrWhiteSpace(SelectedProfileId))
         {
             FieldMaps = new List<FieldMapDto>();
@@ -214,10 +252,12 @@ public class MappingModel : PageModel
         }
         else
         {
-            var profile = await _db.SyncProfiles.FindAsync(SelectedProfileId);
+            profile = await _db.SyncProfiles.FindAsync(SelectedProfileId);
             if (profile != null)
             {
                 FieldMaps = JsonSerializer.Deserialize<List<FieldMapDto>>(profile.FieldMapJson) ?? new List<FieldMapDto>();
+                foreach (var map in FieldMaps.Where(m => m.Rules.Any(r => !string.IsNullOrWhiteSpace(r.Source)) && !string.Equals(m.Transform, "rule-based", StringComparison.OrdinalIgnoreCase)))
+                    map.Transform = "rule-based";
                 var legacyInductionId = GetLegacyInductionId(profile.OnLocationEndpoint);
                 if (!string.IsNullOrWhiteSpace(legacyInductionId))
                 {
@@ -228,13 +268,19 @@ public class MappingModel : PageModel
                 PrimaryMatch = allRules.FirstOrDefault(r => r.IsPrimary) ?? new MatchRuleDto();
                 MatchRules = allRules.Where(r => !r.IsPrimary).ToList();
                 DefaultDivisionHref = profile.DefaultDivisionHref;
-                DefaultAccessGroupHrefs = TransformEngine.ParseReferences(profile.DefaultAccessGroupsJson).Select(g => g.Href).ToList();
+                SavedAccessGroups = TransformEngine.ParseReferences(profile.DefaultAccessGroupsJson).ToList();
+                DefaultAccessGroupHrefs = SavedAccessGroups.Select(g => g.Href).ToList();
+                BridgeMessageTarget = profile.BridgeMessageTarget ?? string.Empty;
+                DefaultUnmatchedAction = profile.DefaultUnmatchedAction.ToString();
                 if (!string.IsNullOrWhiteSpace(profile.DefaultDivisionHref) && DivisionOptions.Count == 0)
                     DivisionOptions = new List<GallagherReference> { new() { Href = profile.DefaultDivisionHref, Name = string.IsNullOrWhiteSpace(profile.DefaultDivisionName) ? profile.DefaultDivisionHref : profile.DefaultDivisionName } };
             }
         }
 
         while (FieldMaps.Count < 8) FieldMaps.Add(new FieldMapDto());
+        foreach (var map in FieldMaps)
+            while (map.Rules.Count < 10)
+                map.Rules.Add(new FieldMapRuleDto());
         while (MatchRules.Count < 4) MatchRules.Add(new MatchRuleDto());
 
         foreach (var rule in MatchRules.Append(PrimaryMatch))
@@ -242,7 +288,44 @@ public class MappingModel : PageModel
             rule.SourceFieldList = SplitFields(rule.SourceFields);
             rule.TargetFieldList = SplitFields(rule.TargetFields);
         }
+
+        return profile;
     }
+
+    public IHtmlContent RenderSourceFieldOptions(string? selectedValue)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("<option value=\"\">-- select --</option>");
+        if (!string.IsNullOrWhiteSpace(selectedValue))
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"<option value=\"{HtmlEncode(selectedValue)}\">{HtmlEncode(selectedValue)}</option>");
+        }
+        if (SourceFields.Any())
+        {
+            sb.AppendLine("<optgroup label=\"Profile record\">");
+            foreach (var f in SourceFields)
+            {
+                var low = !IsPriorityProfileField(f);
+                sb.AppendLine(CultureInfo.InvariantCulture, $"<option value=\"{HtmlEncode(f)}\" data-low-priority=\"{low}\">{HtmlEncode(f)}</option>");
+            }
+            sb.AppendLine("</optgroup>");
+        }
+        foreach (var induction in InductionFieldGroups)
+        {
+            sb.AppendLine(CultureInfo.InvariantCulture, $"<optgroup label=\"{HtmlEncode($"{induction.Name} (ID {induction.Id})")}\">");
+            foreach (var f in induction.Fields)
+            {
+                var value = $"inductions.{induction.Id}.{f}";
+                var display = $"{induction.Name} (ID {induction.Id}) · {f}";
+                var low = !IsPriorityInductionField(f);
+                sb.AppendLine(CultureInfo.InvariantCulture, $"<option value=\"{HtmlEncode(value)}\" data-low-priority=\"{low}\">{HtmlEncode(display)}</option>");
+            }
+            sb.AppendLine("</optgroup>");
+        }
+        return new HtmlString(sb.ToString());
+    }
+
+    private static string HtmlEncode(string? value) => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
 
     public static List<string> SplitFields(string? value) =>
         (value ?? string.Empty)
