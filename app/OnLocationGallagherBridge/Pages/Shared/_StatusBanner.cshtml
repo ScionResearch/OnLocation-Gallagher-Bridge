@@ -1,12 +1,12 @@
 @model OnLocationGallagherBridge.Services.StatusBannerModel
 @{
-    var (label, badgeClass) = Model.Status switch
+    var (label, textClass) = Model.Status switch
     {
-        ConfigurationStatus.NotConfigured => ("Not configured", "bg-secondary"),
-        ConfigurationStatus.Incomplete => ("Incomplete", "bg-warning text-dark"),
-        ConfigurationStatus.Faulty => ("Faulty", "bg-danger"),
-        ConfigurationStatus.Complete => ("Complete", "bg-success"),
-        _ => ("Unknown", "bg-secondary")
+        ConfigurationStatus.NotConfigured => ("Not configured", "text-secondary"),
+        ConfigurationStatus.Incomplete => ("Incomplete", "text-warning"),
+        ConfigurationStatus.Faulty => ("Faulty", "text-danger"),
+        ConfigurationStatus.Complete => ("Complete", "text-success"),
+        _ => ("Unknown", "text-secondary")
     };
 
     var alertClass = Model.Status switch
@@ -33,7 +33,7 @@
 <div class="alert @alertClass d-flex justify-content-between align-items-center mb-4" role="alert">
     <div>
         <strong>@Model.Title</strong>
-        <span class="badge @badgeClass ms-1">@label</span>
+        <span class="status-text @textClass ms-1">@label</span>
         <span class="ms-2 small">@detail</span>
     </div>
 </div>

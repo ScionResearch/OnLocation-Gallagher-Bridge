@@ -52,21 +52,30 @@ public class GallagherConnector : IGallagherConnector
         {
             _logger.Information("Testing Gallagher connection to {BaseUrl}", Cfg.BaseUrl);
             if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "Gallagher BaseUrl not configured"; _logger.Warning("Gallagher BaseUrl is empty"); return false; }
-            var root = await GetApiRootAsync(ct);
-            if (root.HasValue)
+
+            // Perform a fresh request rather than relying on the cached API root.
+            var client = CreateClient();
+            var response = await client.GetAsync("api", ct);
+            if (!response.IsSuccessStatusCode)
             {
-                _lastError = null;
-                _logger.Information("Gallagher connection OK");
-            }
-            else
-            {
+                var body = await response.Content.ReadAsStringAsync(ct);
+                _lastError = $"Gallagher connection failed: {(int)response.StatusCode} {body}";
                 _logger.Warning("Gallagher connection test failed: {Error}", _lastError);
+                _apiRoot = null;
+                return false;
             }
-            return root.HasValue;
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            _apiRoot = doc.RootElement.Clone();
+            _lastError = null;
+            _logger.Information("Gallagher connection OK");
+            return true;
         }
         catch (Exception ex)
         {
             _lastError = ex.Message;
+            _apiRoot = null;
             _logger.Error(ex, "Gallagher connection test failed");
             return false;
         }

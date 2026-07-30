@@ -22,8 +22,8 @@
                 <div class="row g-3">
                     <div class="col-md-6 border-end">
                         <h6 class="card-subtitle mb-2 text-muted">Connection State</h6>
-                        <p class="card-text mb-1">OnLocation: <span class="badge bg-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
-                        <p class="card-text mb-0">Gallagher: <span class="badge bg-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
+                        <p class="card-text mb-1">OnLocation: <span class="status-text text-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
+                        <p class="card-text mb-0">Gallagher: <span class="status-text text-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
                     </div>
                     <div class="col-md-6">
                         <h6 class="card-subtitle mb-2 text-muted">Settings State</h6>
@@ -54,20 +54,16 @@
                         var mappingStatus = Model.ProfileMappingStatus.GetValueOrDefault(p.Id);
                         var initialStatus = Model.ProfileInitialMatchStatus.GetValueOrDefault(p.Id);
                         var configured = mappingStatus == ConfigurationStatus.Complete && initialStatus == ConfigurationStatus.Complete;
+                        var (profileStatus, profileStatusClass) = configured
+                            ? (p.Enabled ? ("All OK", "success") : ("Disabled", "secondary"))
+                            : (mappingStatus == ConfigurationStatus.NotConfigured && initialStatus == ConfigurationStatus.NotConfigured)
+                                ? ("Not configured", "secondary")
+                                : ("Incomplete Config", "warning");
                         <li class="list-group-item">
                             <div class="d-flex justify-content-between align-items-center">
                                 <span>
                                     <strong>@RecordGroupDisplay.GetName(p.Id)</strong>
-                                    @if (configured)
-                                    {
-                                        <span class="badge bg-@(p.Enabled ? "success" : "secondary") ms-2">@(p.Enabled ? "on" : "off")</span>
-                                        <span class="ms-1"><partial name="_ConfigurationStatus" model="mappingStatus" /></span>
-                                        <span class="ms-1"><partial name="_ConfigurationStatus" model="initialStatus" /></span>
-                                    }
-                                    else
-                                    {
-                                        <span class="badge bg-secondary ms-2">Not configured</span>
-                                    }
+                                    <span class="status-text text-@profileStatusClass ms-2">@profileStatus</span>
                                 </span>
                                 @if (configured)
                                 {
@@ -175,7 +171,7 @@
         <div class="d-flex justify-content-between align-items-center">
             <h5 class="card-title mb-0">
                 Sync Activity
-                <span class="badge bg-secondary ms-2" id="activity-state">@(Model.Activity.Running ? "running" : "idle")</span>
+                <span class="status-text text-secondary ms-2" id="activity-state">@(Model.Activity.Running ? "running" : "idle")</span>
             </h5>
             <small class="text-muted" id="activity-elapsed">@(Model.Activity.Running ? Model.Activity.Elapsed : "")</small>
         </div>
@@ -212,8 +208,8 @@
                     <small class="d-block text-muted">id @a.SourceId</small>
                 </td>
                 <td>@RecordGroupDisplay.GetName(a.ProfileId)</td>
-                <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
-                <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
+                <td><span class="status-text text-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
+                <td><span class="status-text text-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
                 <td>
                     @(a.Message ?? "—")
                     @if (!string.IsNullOrWhiteSpace(a.Error))
@@ -248,7 +244,7 @@
 
                     var state = document.getElementById('activity-state');
                     state.textContent = a.running ? 'running' : 'idle';
-                    state.className = 'badge ms-2 ' + (a.running ? 'bg-primary' : 'bg-secondary');
+                    state.className = 'status-text ms-2 ' + (a.running ? 'text-primary' : 'text-secondary');
 
                     text('activity-phase', a.phase);
                     text('activity-profile', a.profileId ? '(' + a.profileId + ')' : '');

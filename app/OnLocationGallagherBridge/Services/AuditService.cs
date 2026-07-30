@@ -22,11 +22,13 @@ public class AuditEntry
     public int DurationMs { get; set; }
 }
 
+public record PagedResult<T>(IReadOnlyList<T> Items, int TotalCount, int SuccessCount, int FailedCount, int PendingCount);
+
 public interface IAuditService
 {
     Task LogAsync(AuditEntry entry);
     Task<IReadOnlyList<AuditLog>> GetRecentAsync(int count = 50);
-    Task<IReadOnlyList<AuditLog>> QueryAsync(string? profileId, string? action, string? outcome, string? search, int count = 200);
+    Task<PagedResult<AuditLog>> QueryAsync(string? profileId, string? action, string? outcome, string? search, int pageNumber = 1, int pageSize = 200);
 }
 
 public class AuditService : IAuditService
@@ -66,8 +68,11 @@ public class AuditService : IAuditService
         return rows.OrderByDescending(a => a.Timestamp).Take(count).ToList();
     }
 
-    public async Task<IReadOnlyList<AuditLog>> QueryAsync(string? profileId, string? action, string? outcome, string? search, int count = 200)
+    public async Task<PagedResult<AuditLog>> QueryAsync(string? profileId, string? action, string? outcome, string? search, int pageNumber = 1, int pageSize = 200)
     {
+        pageNumber = Math.Max(1, pageNumber);
+        pageSize = Math.Max(1, pageSize);
+
         var query = _db.AuditLogs.AsNoTracking().AsQueryable();
         if (!string.IsNullOrWhiteSpace(profileId)) query = query.Where(a => a.ProfileId == profileId);
         if (!string.IsNullOrWhiteSpace(action)) query = query.Where(a => a.Action == action);
@@ -82,6 +87,16 @@ public class AuditService : IAuditService
         }
 
         var rows = await query.ToListAsync();
-        return rows.OrderByDescending(a => a.Timestamp).Take(count).ToList();
+        var total = rows.Count;
+        var success = rows.Count(e => e.Outcome == "Success");
+        var failed = rows.Count(e => e.Outcome == "Failed");
+        var pending = rows.Count(e => e.Outcome == "Pending");
+        var items = rows
+            .OrderByDescending(a => a.Timestamp)
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        return new PagedResult<AuditLog>(items, total, success, failed, pending);
     }
 }

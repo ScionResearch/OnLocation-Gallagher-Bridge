@@ -1,0 +1,48 @@
+@model OnLocationGallagherBridge.Pages.AuditModel
+@{
+    var align = ViewData["PaginationAlign"]?.ToString() ?? "center";
+}
+
+@if (Model.PageCount > 1)
+{
+    <nav aria-label="Audit pagination">
+        <ul class="pagination pagination-sm justify-content-@align mb-0">
+            <li class="page-item @(Model.PageNumber <= 1 ? "disabled" : "")">
+                <a class="page-link" asp-page="/Audit" asp-route-PageNumber="@(Model.PageNumber - 1)" asp-route-ProfileId="@Model.ProfileId" asp-route-Action="@Model.Action" asp-route-Outcome="@Model.Outcome" asp-route-Search="@Model.Search">Previous</a>
+            </li>
+            @{
+                var startPage = Math.Max(1, Model.PageNumber - 2);
+                var endPage = Math.Min(Model.PageCount, Model.PageNumber + 2);
+            }
+            @if (startPage > 1)
+            {
+                <li class="page-item">
+                    <a class="page-link" asp-page="/Audit" asp-route-PageNumber="1" asp-route-ProfileId="@Model.ProfileId" asp-route-Action="@Model.Action" asp-route-Outcome="@Model.Outcome" asp-route-Search="@Model.Search">1</a>
+                </li>
+                @if (startPage > 2)
+                {
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                }
+            }
+            @for (int i = startPage; i <= endPage; i++)
+            {
+                <li class="page-item @(i == Model.PageNumber ? "active" : "")">
+                    <a class="page-link" asp-page="/Audit" asp-route-PageNumber="@i" asp-route-ProfileId="@Model.ProfileId" asp-route-Action="@Model.Action" asp-route-Outcome="@Model.Outcome" asp-route-Search="@Model.Search">@i</a>
+                </li>
+            }
+            @if (endPage < Model.PageCount)
+            {
+                @if (endPage < Model.PageCount - 1)
+                {
+                    <li class="page-item disabled"><span class="page-link">…</span></li>
+                }
+                <li class="page-item">
+                    <a class="page-link" asp-page="/Audit" asp-route-PageNumber="@Model.PageCount" asp-route-ProfileId="@Model.ProfileId" asp-route-Action="@Model.Action" asp-route-Outcome="@Model.Outcome" asp-route-Search="@Model.Search">@Model.PageCount</a>
+                </li>
+            }
+            <li class="page-item @(Model.PageNumber >= Model.PageCount ? "disabled" : "")">
+                <a class="page-link" asp-page="/Audit" asp-route-PageNumber="@(Model.PageNumber + 1)" asp-route-ProfileId="@Model.ProfileId" asp-route-Action="@Model.Action" asp-route-Outcome="@Model.Outcome" asp-route-Search="@Model.Search">Next</a>
+            </li>
+        </ul>
+    </nav>
+}

@@ -35,6 +35,14 @@ public class AuditModel : PageModel
     [BindProperty(SupportsGet = true)]
     public string? Search { get; set; }
 
+    [BindProperty(SupportsGet = true)]
+    public int PageNumber { get; set; } = 1;
+
+    public const int PageSize = 50;
+
+    public int TotalCount { get; set; }
+    public int PageCount => (TotalCount + PageSize - 1) / PageSize;
+
     public int SuccessCount { get; set; }
     public int FailedCount { get; set; }
     public int PendingCount { get; set; }
@@ -43,11 +51,21 @@ public class AuditModel : PageModel
     {
         ProfileIds = await _db.SyncProfiles.AsNoTracking().Select(p => p.Id).ToListAsync(ct);
         Actions = await _db.AuditLogs.AsNoTracking().Select(a => a.Action).Distinct().OrderBy(a => a).ToListAsync(ct);
-        Events = await _audit.QueryAsync(ProfileId, Action, Outcome, Search);
 
-        SuccessCount = Events.Count(e => e.Outcome == "Success");
-        FailedCount = Events.Count(e => e.Outcome == "Failed");
-        PendingCount = Events.Count(e => e.Outcome == "Pending");
+        PageNumber = Math.Max(1, PageNumber);
+        var result = await _audit.QueryAsync(ProfileId, Action, Outcome, Search, PageNumber, PageSize);
+        if (result.TotalCount > 0 && PageNumber > result.TotalCount / PageSize + (result.TotalCount % PageSize == 0 ? 0 : 1))
+        {
+            PageNumber = Math.Max(1, (result.TotalCount + PageSize - 1) / PageSize);
+            result = await _audit.QueryAsync(ProfileId, Action, Outcome, Search, PageNumber, PageSize);
+        }
+
+        Events = result.Items;
+        TotalCount = result.TotalCount;
+
+        SuccessCount = result.SuccessCount;
+        FailedCount = result.FailedCount;
+        PendingCount = result.PendingCount;
     }
 
     public static string OutcomeColour(string outcome) => outcome switch

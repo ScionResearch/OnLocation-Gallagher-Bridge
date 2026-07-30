@@ -46,12 +46,19 @@
     </div>
 </form>
 
-<p class="text-muted">
-    Showing @Model.Events.Count event(s):
-    <span class="badge bg-success">@Model.SuccessCount success</span>
-    <span class="badge bg-danger">@Model.FailedCount failed</span>
-    <span class="badge bg-warning text-dark">@Model.PendingCount awaiting input</span>
-</p>
+<div class="d-flex justify-content-between align-items-center text-muted mb-2">
+    <div>
+        Showing @Model.Events.Count of @Model.TotalCount event(s) (page @Model.PageNumber of @Model.PageCount):
+        <span class="status-text text-success">@Model.SuccessCount success</span>
+        <span class="status-text text-danger">@Model.FailedCount failed</span>
+        <span class="status-text text-warning">@Model.PendingCount awaiting input</span>
+    </div>
+    <div>
+        @{ ViewData["PaginationAlign"] = "end"; }
+        <partial name="_AuditPagination" model="Model" />
+        @{ ViewData["PaginationAlign"] = "center"; }
+    </div>
+</div>
 
 <table class="table table-sm align-middle">
     <thead>
@@ -77,8 +84,8 @@
                     <small class="d-block text-muted">id @a.SourceId</small>
                 </td>
                 <td>@RecordGroupDisplay.GetName(a.ProfileId)</td>
-                <td><span class="badge bg-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
-                <td><span class="badge bg-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
+                <td><span class="status-text text-@AuditModel.ActionColour(a.Action)">@a.Action</span></td>
+                <td><span class="status-text text-@AuditModel.OutcomeColour(a.Outcome)">@a.Outcome</span></td>
                 <td>
                     @(a.Message ?? "—")
                     @if (!string.IsNullOrWhiteSpace(a.Error))
@@ -113,3 +120,5 @@
         }
     </tbody>
 </table>
+
+<partial name="_AuditPagination" model="Model" />

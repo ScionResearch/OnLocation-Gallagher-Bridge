@@ -2,11 +2,11 @@
 @{
     var (label, cssClass) = Model switch
     {
-        ConfigurationStatus.NotConfigured => ("Not configured", "bg-secondary"),
-        ConfigurationStatus.Incomplete => ("Incomplete", "bg-warning text-dark"),
-        ConfigurationStatus.Faulty => ("Faulty", "bg-danger"),
-        ConfigurationStatus.Complete => ("Complete", "bg-success"),
-        _ => ("Unknown", "bg-secondary")
+        ConfigurationStatus.NotConfigured => ("Not configured", "text-secondary"),
+        ConfigurationStatus.Incomplete => ("Incomplete", "text-warning"),
+        ConfigurationStatus.Faulty => ("Faulty", "text-danger"),
+        ConfigurationStatus.Complete => ("Complete", "text-success"),
+        _ => ("Unknown", "text-secondary")
     };
 }
-<span class="badge @cssClass">@label</span>
+<span class="status-text @cssClass">@label</span>
