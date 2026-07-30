@@ -19,20 +19,22 @@
         <div class="card h-100">
             <div class="card-body">
                 <h5 class="card-title">Health</h5>
-                <p class="mb-1">
-                    <strong>Overall:</strong> <partial name="_ConfigurationStatus" model="Model.OverallStatus.Overall" />
-                </p>
-                <ul class="list-inline mb-3 small">
-                    <li class="list-inline-item">Connector settings: <partial name="_ConfigurationStatus" model="Model.OverallStatus.ConnectorSettings" /></li>
-                    <li class="list-inline-item">Field mapping: <partial name="_ConfigurationStatus" model="Model.OverallStatus.FieldMapping" /></li>
-                    <li class="list-inline-item">Initial record match: <partial name="_ConfigurationStatus" model="Model.OverallStatus.InitialMatch" /></li>
-                </ul>
-                <div class="row">
-                    <div class="col-md-6">
-                        <p class="card-text mb-0">OnLocation: <span class="badge bg-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
+                <div class="row g-3">
+                    <div class="col-md-6 border-end">
+                        <h6 class="card-subtitle mb-2 text-muted">Connection State</h6>
+                        <p class="card-text mb-1">OnLocation: <span class="badge bg-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
+                        <p class="card-text mb-0">Gallagher: <span class="badge bg-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
                     </div>
                     <div class="col-md-6">
-                        <p class="card-text mb-0">Gallagher: <span class="badge bg-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
+                        <h6 class="card-subtitle mb-2 text-muted">Settings State</h6>
+                        <p class="mb-1">
+                            <strong>Overall:</strong> <partial name="_ConfigurationStatus" model="Model.OverallStatus.Overall" />
+                        </p>
+                        <ul class="list-inline mb-0 small">
+                            <li class="list-inline-item">Connector settings: <partial name="_ConfigurationStatus" model="Model.OverallStatus.ConnectorSettings" /></li>
+                            <li class="list-inline-item">Field mapping: <partial name="_ConfigurationStatus" model="Model.OverallStatus.FieldMapping" /></li>
+                            <li class="list-inline-item">Initial record match: <partial name="_ConfigurationStatus" model="Model.OverallStatus.InitialMatch" /></li>
+                        </ul>
                     </div>
                 </div>
             </div>
