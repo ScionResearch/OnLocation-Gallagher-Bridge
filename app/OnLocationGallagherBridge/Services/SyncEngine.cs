@@ -94,7 +94,10 @@ public class SyncEngine : BackgroundService
             profile.LastRun = now;
             profile.NextRun = now.AddMinutes(Math.Max(1, profile.FastSyncIntervalMinutes));
             if (fullSync)
+            {
+                profile.LastFullRun = now;
                 profile.NextFullRun = ComputeNextFullRun(now, profile);
+            }
             await db.SaveChangesAsync(ct);
         }
     }
@@ -120,8 +123,17 @@ public class SyncEngine : BackgroundService
         var intervalDays = Math.Max(1, profile.FullSyncIntervalDays);
         var timeOfDay = TimeSpan.FromMinutes(Math.Clamp(profile.FullSyncTimeOfDayMinutes, 0, 1439));
         var local = from.ToLocalTime();
-        var candidate = local.Date.Add(timeOfDay);
-        if (candidate <= local) candidate = candidate.AddDays(intervalDays);
+
+        // Use the date of the last full run if we have one so changing the interval
+        // immediately changes the next scheduled run. Otherwise fall back to today.
+        var baseDate = profile.LastFullRun?.ToLocalTime().Date ?? local.Date;
+        var candidate = baseDate.Add(timeOfDay);
+
+        var minimum = local;
+        if (profile.LastFullRun.HasValue && profile.LastFullRun.Value.ToLocalTime() > minimum)
+            minimum = profile.LastFullRun.Value.ToLocalTime();
+
+        while (candidate <= minimum) candidate = candidate.AddDays(intervalDays);
         return new DateTimeOffset(candidate, local.Offset);
     }
 

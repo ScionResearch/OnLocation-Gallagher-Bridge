@@ -1,7 +1,7 @@
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$Version = "1.0.0.0"
+    [string]$Version = "1.0.$([int]((Get-Date).Date - [datetime]'2000-01-01').TotalDays).0"
 )
 
 $ErrorActionPreference = "Stop"

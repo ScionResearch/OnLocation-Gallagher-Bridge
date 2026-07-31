@@ -44,6 +44,7 @@ public class SyncProfile
     public bool InitialMatchCompleted { get; set; } = false;
     public DateTimeOffset? InitialMatchCompletedAt { get; set; }
     public DateTimeOffset? LastRun { get; set; }
+    public DateTimeOffset? LastFullRun { get; set; }
     public DateTimeOffset? NextRun { get; set; }
     // Field on the Gallagher cardholder to write sync-result messages to. Empty means no message is written.
     // "description" writes to the cardholder description. "personalDataFields.<name>" writes to that PDF.

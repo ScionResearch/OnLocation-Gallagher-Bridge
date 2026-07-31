@@ -8,7 +8,8 @@
            UpgradeCode="218978F7-2F06-4A49-B3B6-27482CCB60DF"
            Scope="perMachine">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of OnLocation-Gallagher Bridge is already installed." />
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of OnLocation-Gallagher Bridge is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
@@ -101,5 +102,6 @@
     <Icon Id="TrayIcon.ico" SourceFile="$(var.TrayPublishDir)\favicon.ico" />
 
     <ui:WixUI Id="WixUI_InstallDir" />
+    <UIRef Id="WixUI_ErrorProgressText" />
   </Package>
 </Wix>

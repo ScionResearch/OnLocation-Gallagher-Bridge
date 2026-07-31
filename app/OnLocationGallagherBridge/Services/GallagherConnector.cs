@@ -190,19 +190,21 @@ public class GallagherConnector : IGallagherConnector
         if (string.IsNullOrEmpty(href)) { _lastError = "No cardholders href discovered"; return null; }
         var json = JsonSerializer.Serialize(payload);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
+        _logger.Information("Gallagher --> POST {Url} ({Bytes} bytes)", href, json.Length);
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var response = await client.PostAsync(href, content, ct);
+        var result = await response.Content.ReadAsStringAsync(ct);
+        stopwatch.Stop();
+        _logger.Information("Gallagher <-- {Status} POST {Url} in {ElapsedMs} ms, {Bytes} bytes", (int)response.StatusCode, href, stopwatch.ElapsedMilliseconds, result.Length);
         if (!response.IsSuccessStatusCode)
         {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            _lastError = $"Gallagher create failed: {(int)response.StatusCode} {body}";
+            _lastError = $"Gallagher create failed: {(int)response.StatusCode} {result}";
             _logger.Error(_lastError);
             return null;
         }
         // A successful create is a 201 with an empty body: the new cardholder is identified only by the
         // Location header. Parsing the body unconditionally threw a JsonReaderException on every create.
-        var result = await response.Content.ReadAsStringAsync(ct);
         var location = response.Headers.Location?.ToString();
-        _logger.Information("Gallagher create returned {Status}, location '{Location}', {Bytes} bytes", (int)response.StatusCode, location, result.Length);
 
         JsonElement? parsed = null;
         if (!string.IsNullOrWhiteSpace(result))
@@ -247,9 +249,11 @@ public class GallagherConnector : IGallagherConnector
         _logger.Information("Gallagher --> PATCH {Url} ({Bytes} bytes)", href, json.Length);
         _logger.Debug("Gallagher --> PATCH body {Url}: {Body}", href, json);
 
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var response = await client.PatchAsync(href, content, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
-        _logger.Information("Gallagher <-- {Status} PATCH {Url}", (int)response.StatusCode, href);
+        stopwatch.Stop();
+        _logger.Information("Gallagher <-- {Status} PATCH {Url} in {ElapsedMs} ms, {Bytes} bytes", (int)response.StatusCode, href, stopwatch.ElapsedMilliseconds, body.Length);
 
         if (response.IsSuccessStatusCode) return new GallagherWriteResult(true, (int)response.StatusCode, null);
 
@@ -447,7 +451,16 @@ public class GallagherConnector : IGallagherConnector
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         if (!string.IsNullOrWhiteSpace(Cfg.ApiKey))
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Gallagher", Cfg.ApiKey.Trim());
+        {
+            var key = Cfg.ApiKey.Trim();
+            var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($":{key}"));
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
+            _logger.Debug("Gallagher request will use Basic auth with key prefix {KeyPrefix}", key.Length > 4 ? key[..4] : "(short)");
+        }
+        else
+        {
+            _logger.Warning("Gallagher API key is not configured");
+        }
 
         return client;
     }

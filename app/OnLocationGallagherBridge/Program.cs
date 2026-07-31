@@ -59,14 +59,14 @@ builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("OnLocation")
     .ConfigurePrimaryHttpMessageHandler(sp =>
     {
-        var config = sp.GetRequiredService<ConfigService>().GetConfig();
-        return CreateIpv4Handler(config.OnLocation.DisableTlsVerification);
+        var config = sp.GetRequiredService<ConfigService>();
+        return CreateIpv4Handler(() => config.GetConfig().OnLocation.DisableTlsVerification);
     });
 builder.Services.AddHttpClient("Gallagher")
     .ConfigurePrimaryHttpMessageHandler(sp =>
     {
-        var config = sp.GetRequiredService<ConfigService>().GetConfig();
-        return CreateIpv4Handler(config.Gallagher.DisableTlsVerification);
+        var config = sp.GetRequiredService<ConfigService>();
+        return CreateIpv4Handler(() => config.GetConfig().Gallagher.DisableTlsVerification);
     });
 builder.Services.AddSingleton<ISyncActivity, SyncActivityService>();
 builder.Services.AddSingleton<IOnLocationConnector, OnLocationConnector>();
@@ -141,6 +141,8 @@ static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncIntervalDays", "INTEGER NOT NULL DEFAULT 1");
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncTimeOfDayMinutes", "INTEGER NOT NULL DEFAULT 60");
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncLookbackMonths", "INTEGER NULL");
+    await EnsureColumnAsync(db, "SyncProfiles", "LastRun", "TEXT NULL");
+    await EnsureColumnAsync(db, "SyncProfiles", "LastFullRun", "TEXT NULL");
     await EnsureColumnAsync(db, "SyncProfiles", "NextFullRun", "TEXT NULL");
     await EnsureColumnAsync(db, "SyncProfiles", "BridgeMessageTarget", "TEXT NOT NULL DEFAULT ''");
     await EnsureColumnAsync(db, "SyncProfiles", "DefaultUnmatchedAction", "INTEGER NOT NULL DEFAULT 0");
@@ -203,7 +205,7 @@ static void SeedDefaults(BridgeDbContext db)
     db.SaveChanges();
 }
 
-static SocketsHttpHandler CreateIpv4Handler(bool disableTlsVerification = false)
+static SocketsHttpHandler CreateIpv4Handler(Func<bool> isTlsVerificationDisabled)
 {
     var handler = new SocketsHttpHandler();
     handler.ConnectCallback = async (context, ct) =>
@@ -214,9 +216,10 @@ static SocketsHttpHandler CreateIpv4Handler(bool disableTlsVerification = false)
                        ?? throw new InvalidOperationException($"Could not resolve {context.DnsEndPoint.Host}");
         Log.Debug("Resolved {Host} to {Addresses}; connecting to {Endpoint}:{Port}",
             context.DnsEndPoint.Host, addresses, endpoint, context.DnsEndPoint.Port);
+
+        var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         try
         {
-            var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
             await socket.ConnectAsync(endpoint, context.DnsEndPoint.Port, ct);
             return new NetworkStream(socket, ownsSocket: true);
         }
@@ -224,14 +227,26 @@ static SocketsHttpHandler CreateIpv4Handler(bool disableTlsVerification = false)
         {
             Log.Error(ex, "Connection to {Endpoint}:{Port} ({Family}) refused for {Host}",
                 endpoint, context.DnsEndPoint.Port, endpoint.AddressFamily, context.DnsEndPoint.Host);
+            socket.Dispose();
             throw;
         }
     };
 
-    if (disableTlsVerification)
+    handler.SslOptions.RemoteCertificateValidationCallback = (sender, certificate, chain, errors) =>
     {
-        handler.SslOptions.RemoteCertificateValidationCallback = (sender, certificate, chain, errors) => true;
-    }
+        var disabled = isTlsVerificationDisabled();
+        if (disabled)
+        {
+            Log.Debug("TLS verification disabled; accepting certificate with errors {Errors}", errors);
+            return true;
+        }
+        if (errors == System.Net.Security.SslPolicyErrors.None)
+        {
+            return true;
+        }
+        Log.Debug("TLS verification failed with {Errors}; rejecting certificate", errors);
+        return false;
+    };
 
     return handler;
 }

@@ -38,6 +38,7 @@ internal class TrayApplicationContext : ApplicationContext
     private const string ServiceName = "OnLocationGallagherBridge";
 
     private ServiceStatus? _lastStatus;
+    private ServiceControllerStatus? _lastServiceStatus;
     private ToolStripMenuItem _statusMenuItem = null!;
     private ToolStripMenuItem _serviceStatusMenuItem = null!;
     private ToolStripMenuItem _startServiceMenuItem = null!;
@@ -119,6 +120,7 @@ internal class TrayApplicationContext : ApplicationContext
             _lastStatus = null;
         }
 
+        _lastServiceStatus = QueryServiceState();
         UpdateIconAndMenu();
         RefreshServiceState();
     }
@@ -126,6 +128,19 @@ internal class TrayApplicationContext : ApplicationContext
     private void UpdateIconAndMenu()
     {
         var status = _lastStatus;
+
+        if (_lastServiceStatus != ServiceControllerStatus.Running)
+        {
+            var serviceText = _lastServiceStatus.HasValue ? $"stopped ({_lastServiceStatus.Value})" : "not installed";
+            SetIcon(StatusColor.Red);
+            _openMenuItem.Enabled = false;
+            _statusMenuItem.Text = $"Status: service {serviceText}";
+            _notifyIcon.Text = $"OnLocation-Gallagher Bridge{Environment.NewLine}" +
+                               $"Service: {serviceText}{Environment.NewLine}" +
+                               $"Open the service menu to start it.";
+            return;
+        }
+
         if (status is null || (DateTimeOffset.UtcNow - status.Timestamp) > TimeSpan.FromSeconds(30))
         {
             SetIcon(StatusColor.Gray);
@@ -163,21 +178,8 @@ internal class TrayApplicationContext : ApplicationContext
 
     private void RefreshServiceState()
     {
-        try
-        {
-            using var sc = new ServiceController(ServiceName);
-            sc.Refresh();
-            var status = sc.Status;
-            var startType = sc.StartType;
-            _serviceStatusMenuItem.Text = $"Service: {status} ({startType})";
-
-            _startServiceMenuItem.Enabled = status == ServiceControllerStatus.Stopped;
-            _stopServiceMenuItem.Enabled = status == ServiceControllerStatus.Running;
-            _restartServiceMenuItem.Enabled = status == ServiceControllerStatus.Running;
-            _enableAutoStartMenuItem.Enabled = startType != ServiceStartMode.Automatic;
-            _disableAutoStartMenuItem.Enabled = startType != ServiceStartMode.Disabled;
-        }
-        catch
+        var status = _lastServiceStatus;
+        if (!status.HasValue)
         {
             _serviceStatusMenuItem.Text = "Service: not installed";
             _startServiceMenuItem.Enabled = false;
@@ -185,6 +187,45 @@ internal class TrayApplicationContext : ApplicationContext
             _restartServiceMenuItem.Enabled = false;
             _enableAutoStartMenuItem.Enabled = false;
             _disableAutoStartMenuItem.Enabled = false;
+            return;
+        }
+
+        ServiceStartMode startType;
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            startType = sc.StartType;
+            _serviceStatusMenuItem.Text = $"Service: {status.Value} ({startType})";
+        }
+        catch
+        {
+            _serviceStatusMenuItem.Text = $"Service: {status.Value}";
+            startType = ServiceStartMode.Automatic;
+        }
+
+        _startServiceMenuItem.Enabled = status.Value == ServiceControllerStatus.Stopped;
+        _stopServiceMenuItem.Enabled = status.Value == ServiceControllerStatus.Running;
+        _restartServiceMenuItem.Enabled = status.Value == ServiceControllerStatus.Running;
+        _enableAutoStartMenuItem.Enabled = startType != ServiceStartMode.Automatic;
+        _disableAutoStartMenuItem.Enabled = startType != ServiceStartMode.Disabled;
+    }
+
+    private static ServiceControllerStatus? QueryServiceState()
+    {
+        try
+        {
+            using var sc = new ServiceController(ServiceName);
+            sc.Refresh();
+            var startType = sc.StartType;
+            var status = sc.Status;
+            // Keep the start-type side effect in a debug log; menu uses start type separately.
+            Debug.WriteLine($"Service {ServiceName} status: {status}, start type: {startType}");
+            return status;
+        }
+        catch
+        {
+            return null;
         }
     }
 

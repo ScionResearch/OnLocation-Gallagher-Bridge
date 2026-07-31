@@ -171,7 +171,9 @@ public class OnLocationConnector : IOnLocationConnector
         var url = $"induction/{inductionId}/holder?{query}";
         var (response, body) = await SendLoggedAsync(client, new HttpRequestMessage(HttpMethod.Get, url), ct);
         if (!await HandleResponseAsync(response, body, ct)) return Array.Empty<JsonElement>();
-        return ExtractRecords(body);
+        var records = ExtractRecords(body);
+        _activity.AddChecked(records.Count, $"Induction {inductionId}: checked {records.Count} recent holder record(s)");
+        return records;
     }
     private static string? HighestId(IReadOnlyList<JsonElement> records, string? current)
     {
