@@ -1,0 +1,105 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+
+  <Package Name="OnLocation-Gallagher Bridge"
+           Manufacturer="Bioeconomy Science Institute"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="218978F7-2F06-4A49-B3B6-27482CCB60DF"
+           Scope="perMachine">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OnLocation-Gallagher Bridge is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <WixVariable Id="WixUILicenseRtf" Value="Assets\license.rtf" />
+    <!-- MSI branding images. Standard WiX dimensions: banner 493x58, dialog 493x312. -->
+    <WixVariable Id="WixUIBannerBmp" Value="Assets\banner.png" />
+    <WixVariable Id="WixUIDialogBmp" Value="Assets\dialog.png" />
+
+    <Feature Id="ProductFeature" Title="OnLocation-Gallagher Bridge" Level="1">
+      <ComponentGroupRef Id="AppComponents" />
+      <ComponentRef Id="ServiceComponent" />
+      <ComponentGroupRef Id="TrayComponents" />
+      <ComponentRef Id="TrayShortcutComponent" />
+    </Feature>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OnLocation-Gallagher Bridge">
+        <Directory Id="TrayFolder" Name="Tray" />
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="OnLocation-Gallagher Bridge" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="BridgeDataFolder" Name="OnLocation-Gallagher-Bridge" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppComponents" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)\**">
+        <Exclude Files="$(var.PublishDir)\OnLocationGallagherBridge.exe" />
+        <Exclude Files="$(var.PublishDir)\*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="ServiceComponent" Directory="INSTALLFOLDER" Guid="AA1E9060-4799-4015-B3A0-585A0773BA86">
+      <File Id="MainExe" Source="$(var.PublishDir)\OnLocationGallagherBridge.exe" KeyPath="yes">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="OnLocation-Gallagher Bridge"
+                  Directory="ApplicationProgramsFolder"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Advertise="yes" />
+      </File>
+
+      <CreateFolder Directory="BridgeDataFolder" />
+
+      <ServiceInstall Id="ServiceInstaller"
+                      Type="ownProcess"
+                      Name="OnLocationGallagherBridge"
+                      DisplayName="OnLocation-Gallagher Bridge"
+                      Description="Synchronises OnLocation records with Gallagher Command Centre."
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="LocalSystem" />
+
+      <ServiceControl Id="ServiceControl"
+                      Name="OnLocationGallagherBridge"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+
+      <fire:FirewallException Id="OnLocationGallagherBridgeFirewall"
+                              Name="OnLocation-Gallagher Bridge"
+                              File="MainExe"
+                              Scope="any"
+                              Profile="all"
+                              IgnoreFailure="yes" />
+    </Component>
+
+    <ComponentGroup Id="TrayComponents" Directory="TrayFolder">
+      <Files Include="$(var.TrayPublishDir)\**">
+        <Exclude Files="$(var.TrayPublishDir)\*.pdb" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="TrayShortcutComponent" Directory="ApplicationProgramsFolder" Guid="2978048B-8D77-469E-A1BF-CEEFE3A0DACA">
+      <Shortcut Id="TrayStartMenuShortcut"
+                Name="Status Widget"
+                Target="[TrayFolder]OnLocationGallagherBridge.Tray.exe"
+                Directory="ApplicationProgramsFolder"
+                WorkingDirectory="TrayFolder"
+                Icon="TrayIcon.ico" />
+      <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\BSI\OnLocationGallagherBridge" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Icon Id="TrayIcon.ico" SourceFile="$(var.TrayPublishDir)\favicon.ico" />
+
+    <ui:WixUI Id="WixUI_InstallDir" />
+  </Package>
+</Wix>

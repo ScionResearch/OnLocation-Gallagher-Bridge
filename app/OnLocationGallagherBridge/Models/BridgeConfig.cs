@@ -22,6 +22,7 @@ public class OnLocationConfig
     public string? ApiKey { get; set; } = "";
     public string? Password { get; set; } = "";
     public string? TokenEndpoint { get; set; } = "https://login.whosonlocation.com/oauth2/token";
+    public bool DisableTlsVerification { get; set; } = false;
 }
 
 public class GallagherConfig

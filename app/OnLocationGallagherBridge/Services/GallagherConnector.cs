@@ -14,6 +14,8 @@ public record GallagherWriteResult(bool Success, int StatusCode, string? Error)
 
 public interface IGallagherConnector
 {
+    bool? LastConnectionResult { get; }
+    string? LastConnectionError { get; }
     Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false);
     Task<JsonElement?> FindCardholderByEmailAsync(string email, CancellationToken ct = default);
     Task<JsonElement?> CreateCardholderAsync(object payload, CancellationToken ct = default);
@@ -39,6 +41,16 @@ public class GallagherConnector : IGallagherConnector
     private JsonElement? _apiRoot;
     private bool? _lastConnectionResult;
     private readonly object _connectionLock = new();
+
+    public bool? LastConnectionResult
+    {
+        get { lock (_connectionLock) return _lastConnectionResult; }
+    }
+
+    public string? LastConnectionError
+    {
+        get { lock (_connectionLock) return _lastError; }
+    }
 
     public GallagherConnector(IHttpClientFactory httpFactory, ConfigService config, INotificationService notifications, Serilog.ILogger? logger = null)
     {
@@ -427,19 +439,16 @@ public class GallagherConnector : IGallagherConnector
     {
         if (string.IsNullOrWhiteSpace(Cfg.BaseUrl))
             throw new InvalidOperationException("Gallagher BaseUrl is not configured.");
-        var handler = new SocketsHttpHandler
-        {
-            SslOptions = new System.Net.Security.SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = (sender, cert, chain, ssl) =>
-                    Cfg.DisableTlsVerification || ssl == System.Net.Security.SslPolicyErrors.None
-            }
-        };
-        var client = new HttpClient(handler);
+
+        var client = _httpFactory.CreateClient("Gallagher");
         client.BaseAddress = new Uri(Cfg.BaseUrl.TrimEnd('/') + "/");
-        var apiKey = Cfg.ApiKey ?? string.Empty;
-        var bytes = Encoding.UTF8.GetBytes($":{apiKey}");
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(bytes));
+        client.Timeout = TimeSpan.FromMinutes(2);
+        client.DefaultRequestHeaders.Accept.Clear();
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+        if (!string.IsNullOrWhiteSpace(Cfg.ApiKey))
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Gallagher", Cfg.ApiKey.Trim());
+
         return client;
     }
 

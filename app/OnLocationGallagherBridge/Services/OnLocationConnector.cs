@@ -8,6 +8,8 @@ namespace OnLocationGallagherBridge.Services;
 
 public interface IOnLocationConnector
 {
+    bool? LastConnectionResult { get; }
+    string? LastConnectionError { get; }
     Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false);
     Task<IReadOnlyList<JsonElement>> GetStaffAsync(SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
     Task<IReadOnlyList<JsonElement>> GetContractorMembersAsync(SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
@@ -50,6 +52,16 @@ public class OnLocationConnector : IOnLocationConnector
     private string? _lastError;
     private bool? _lastConnectionResult;
     private readonly object _connectionLock = new();
+
+    public bool? LastConnectionResult
+    {
+        get { lock (_connectionLock) return _lastConnectionResult; }
+    }
+
+    public string? LastConnectionError
+    {
+        get { lock (_connectionLock) return _lastError; }
+    }
 
     public OnLocationConnector(IHttpClientFactory httpFactory, ConfigService config, ISyncActivity activity, INotificationService notifications, Serilog.ILogger? logger = null)
     {
@@ -441,7 +453,7 @@ public class OnLocationConnector : IOnLocationConnector
         }
 
         _logger.Information("Requesting new OnLocation OAuth2 access token");
-        var client = _httpFactory.CreateClient();
+        var client = _httpFactory.CreateClient("OnLocation");
 
         // OnLocation's token endpoint requires the client id/secret as HTTP Basic auth,
         // NOT as form fields. Sending them in the body results in a 403 Forbidden.

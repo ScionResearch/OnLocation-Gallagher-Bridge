@@ -1,4 +1,6 @@
 using System.Data;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
@@ -34,8 +36,17 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.File(Path.Combine(logDir, "bridge-.log"), rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30, restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug)
     .CreateLogger();
 
-var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = args, ContentRootPath = contentRoot });
-builder.Host.UseWindowsService();
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = contentRoot
+});
+
+builder.Host.UseWindowsService(options =>
+{
+    options.ServiceName = "OnLocationGallagherBridge";
+});
+
 builder.Host.UseSerilog();
 
 builder.WebHost.UseUrls("http://*:5000");
@@ -45,7 +56,18 @@ builder.Services.AddDbContext<BridgeDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(dataDir, "bridge.db")}"));
 
 builder.Services.AddMemoryCache();
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("OnLocation")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+    {
+        var config = sp.GetRequiredService<ConfigService>().GetConfig();
+        return CreateIpv4Handler(config.OnLocation.DisableTlsVerification);
+    });
+builder.Services.AddHttpClient("Gallagher")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+    {
+        var config = sp.GetRequiredService<ConfigService>().GetConfig();
+        return CreateIpv4Handler(config.Gallagher.DisableTlsVerification);
+    });
 builder.Services.AddSingleton<ISyncActivity, SyncActivityService>();
 builder.Services.AddSingleton<IOnLocationConnector, OnLocationConnector>();
 builder.Services.AddSingleton<IOnLocationSourceService, OnLocationSourceService>();
@@ -59,6 +81,7 @@ builder.Services.AddSingleton<IAlertService, AlertService>();
 builder.Services.AddSingleton<INotificationService, NotificationService>();
 builder.Services.AddHostedService<NotificationScheduler>();
 builder.Services.AddHostedService<ConnectionMonitorService>();
+builder.Services.AddHostedService<StatusFileService>();
 builder.Services.AddScoped<IConfigurationStatusService, ConfigurationStatusService>();
 
 // The initial match review posts about ten form values per record. The default limit of 1024 is reached
@@ -178,4 +201,37 @@ static void SeedDefaults(BridgeDbContext db)
         }
     );
     db.SaveChanges();
+}
+
+static SocketsHttpHandler CreateIpv4Handler(bool disableTlsVerification = false)
+{
+    var handler = new SocketsHttpHandler();
+    handler.ConnectCallback = async (context, ct) =>
+    {
+        var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, ct);
+        var endpoint = addresses.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork)
+                       ?? addresses.FirstOrDefault()
+                       ?? throw new InvalidOperationException($"Could not resolve {context.DnsEndPoint.Host}");
+        Log.Debug("Resolved {Host} to {Addresses}; connecting to {Endpoint}:{Port}",
+            context.DnsEndPoint.Host, addresses, endpoint, context.DnsEndPoint.Port);
+        try
+        {
+            var socket = new Socket(endpoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            await socket.ConnectAsync(endpoint, context.DnsEndPoint.Port, ct);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch (SocketException ex)
+        {
+            Log.Error(ex, "Connection to {Endpoint}:{Port} ({Family}) refused for {Host}",
+                endpoint, context.DnsEndPoint.Port, endpoint.AddressFamily, context.DnsEndPoint.Host);
+            throw;
+        }
+    };
+
+    if (disableTlsVerification)
+    {
+        handler.SslOptions.RemoteCertificateValidationCallback = (sender, certificate, chain, errors) => true;
+    }
+
+    return handler;
 }
