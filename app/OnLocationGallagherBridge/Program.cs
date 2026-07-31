@@ -56,6 +56,9 @@ builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IJobProcessor, JobProcessor>();
 builder.Services.AddHostedService<SyncEngine>();
 builder.Services.AddSingleton<IAlertService, AlertService>();
+builder.Services.AddSingleton<INotificationService, NotificationService>();
+builder.Services.AddHostedService<NotificationScheduler>();
+builder.Services.AddHostedService<ConnectionMonitorService>();
 builder.Services.AddScoped<IConfigurationStatusService, ConfigurationStatusService>();
 
 // The initial match review posts about ten form values per record. The default limit of 1024 is reached

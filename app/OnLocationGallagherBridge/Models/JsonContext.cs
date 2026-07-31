@@ -5,6 +5,11 @@ namespace OnLocationGallagherBridge.Models;
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, WriteIndented = true)]
 [JsonSerializable(typeof(BridgeConfig))]
+[JsonSerializable(typeof(NotificationConfig))]
+[JsonSerializable(typeof(NotificationGroup))]
+[JsonSerializable(typeof(NotificationRecipient))]
+[JsonSerializable(typeof(List<NotificationGroup>))]
+[JsonSerializable(typeof(List<NotificationRecipient>))]
 [JsonSerializable(typeof(List<FieldMapDto>))]
 [JsonSerializable(typeof(FieldMapDto))]
 [JsonSerializable(typeof(List<FieldMapRuleDto>))]

@@ -1,0 +1,321 @@
+@page
+@model OnLocationGallagherBridge.Pages.NotificationsModel
+@{
+    ViewData["Title"] = "Notifications";
+}
+
+<div class="page-header">
+    <h2>Notifications</h2>
+</div>
+
+@if (Model.Message != null)
+{
+    <div class="alert alert-info">@Model.Message</div>
+}
+
+<form method="post">
+    <div class="form-check mb-3">
+        <input class="form-check-input" asp-for="Notifications.Enabled" />
+        <label class="form-check-label" asp-for="Notifications.Enabled">Enable notifications</label>
+    </div>
+
+    <div class="mb-3">
+        <label class="form-label" asp-for="Notifications.MaxEmailsPerHour">Max emails per hour</label>
+        <input class="form-control" type="number" min="0" asp-for="Notifications.MaxEmailsPerHour" style="max-width: 10rem;" />
+        <div class="form-text">0 means unlimited. Lower-priority notifications are held and consolidated for the next window when the limit is reached.</div>
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">SMTP Settings</div>
+        <div class="card-body row g-3">
+            <div class="col-md-6">
+                <label class="form-label" asp-for="Smtp.Host">Host</label>
+                <input class="form-control" asp-for="Smtp.Host" />
+            </div>
+            <div class="col-md-2">
+                <label class="form-label" asp-for="Smtp.Port">Port</label>
+                <input class="form-control" type="number" asp-for="Smtp.Port" />
+            </div>
+            <div class="col-md-4 d-flex align-items-end pb-2">
+                <div class="form-check">
+                    <input class="form-check-input" asp-for="Smtp.EnableSsl" />
+                    <label class="form-check-label" asp-for="Smtp.EnableSsl">Enable SSL / TLS</label>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" asp-for="Smtp.Username">Username</label>
+                <input class="form-control" asp-for="Smtp.Username" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" for="Smtp_Password">Password</label>
+                <input class="form-control" type="password" id="Smtp_Password" name="Smtp.Password" value="@Model.Smtp.Password" />
+            </div>
+            <div class="col-md-4">
+                <label class="form-label" asp-for="Smtp.From">From address</label>
+                <input class="form-control" asp-for="Smtp.From" />
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Recipients</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-recipient">Add recipient</button>
+        </div>
+        <div class="card-body">
+            <div id="recipients-list">
+                @for (int i = 0; i < Model.Notifications.Recipients.Count; i++)
+                {
+                    <div class="row g-2 recipient-row mb-2">
+                        <div class="col-md-4">
+                            <input class="form-control" name="Notifications.Recipients[@i].Name" value="@Model.Notifications.Recipients[i].Name" placeholder="Name" />
+                        </div>
+                        <div class="col-md-5">
+                            <input class="form-control recipient-email" name="Notifications.Recipients[@i].Email" value="@Model.Notifications.Recipients[i].Email" placeholder="Email" />
+                        </div>
+                        <div class="col-md-2">
+                            <button type="button" class="btn btn-sm btn-outline-danger remove-recipient">Remove</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>Notification groups</span>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="add-group">Add group</button>
+        </div>
+        <div class="card-body" id="groups-list">
+            @for (int i = 0; i < Model.Notifications.Groups.Count; i++)
+            {
+                var group = Model.Notifications.Groups[i];
+                <div class="card mb-3 group-block">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Group name</label>
+                                <input class="form-control" name="Notifications.Groups[@i].Name" value="@group.Name" placeholder="e.g. Critical" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label" title="Lower numbers are sent first when the rate limit is reached.">Priority</label>
+                                <input class="form-control" type="number" name="Notifications.Groups[@i].Priority" value="@group.Priority" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label">Mode</label>
+                                <select class="form-select group-mode" name="Notifications.Groups[@i].Mode" onchange="updateGroupMode(this)">
+                                    <option value="every" selected="@(group.Mode == "every" ? "selected" : null)">Every occurrence</option>
+                                    <option value="grouped" selected="@(group.Mode == "grouped" ? "selected" : null)">Grouped (count)</option>
+                                    <option value="scheduled" selected="@(group.Mode == "scheduled" ? "selected" : null)">Scheduled</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row mt-3 threshold-row" style="display: @(group.Mode == "grouped" ? "" : "none");">
+                            <div class="col-md-3">
+                                <label class="form-label">Event threshold</label>
+                                <input class="form-control" type="number" min="1" name="Notifications.Groups[@i].Threshold" value="@group.Threshold" />
+                            </div>
+                        </div>
+                        <div class="row mt-3 interval-row" style="display: @(group.Mode == "scheduled" ? "" : "none");">
+                            <div class="col-md-3">
+                                <label class="form-label">Interval</label>
+                                <select class="form-select" name="Notifications.Groups[@i].Interval">
+                                    <option value="hour" selected="@(group.Interval == "hour" ? "selected" : null)">Hourly</option>
+                                    <option value="day" selected="@(group.Interval == "day" ? "selected" : null)">Daily</option>
+                                    <option value="week" selected="@(group.Interval == "week" ? "selected" : null)">Weekly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Event sources</label>
+                                <select multiple class="form-select group-events" name="Notifications.Groups[@i].EventSources" size="5">
+                                    @foreach (var ev in Model.EventTypes)
+                                    {
+                                        <option value="@ev.Value" selected="@(group.EventSources.Contains(ev.Value) ? "selected" : null)">@ev.Display</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Recipients</label>
+                                <select multiple class="form-select group-recipients" name="Notifications.Groups[@i].RecipientEmails" size="5">
+                                    @foreach (var r in Model.Notifications.Recipients)
+                                    {
+                                        <option value="@r.Email" selected="@(group.RecipientEmails.Contains(r.Email) ? "selected" : null)">@r.Name (@r.Email)</option>
+                                    }
+                                </select>
+                            </div>
+                        </div>
+                        <button type="button" class="btn btn-sm btn-outline-danger mt-3 remove-group">Remove group</button>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary" formaction="?handler=Save">Save</button>
+    <button type="submit" class="btn btn-outline-secondary" formaction="?handler=Test">Send test email</button>
+</form>
+
+<template id="recipient-template">
+    <div class="row g-2 recipient-row mb-2">
+        <div class="col-md-4">
+            <input class="form-control" name="Notifications.Recipients[__INDEX__].Name" value="" placeholder="Name" />
+        </div>
+        <div class="col-md-5">
+            <input class="form-control recipient-email" name="Notifications.Recipients[__INDEX__].Email" value="" placeholder="Email" />
+        </div>
+        <div class="col-md-2">
+            <button type="button" class="btn btn-sm btn-outline-danger remove-recipient">Remove</button>
+        </div>
+    </div>
+</template>
+
+<template id="group-template">
+    <div class="card mb-3 group-block">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label">Group name</label>
+                    <input class="form-control" name="Notifications.Groups[__INDEX__].Name" value="" placeholder="e.g. Critical" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" title="Lower numbers are sent first when the rate limit is reached.">Priority</label>
+                    <input class="form-control" type="number" name="Notifications.Groups[__INDEX__].Priority" value="1" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Mode</label>
+                    <select class="form-select group-mode" name="Notifications.Groups[__INDEX__].Mode" onchange="updateGroupMode(this)">
+                        <option value="every">Every occurrence</option>
+                        <option value="grouped">Grouped (count)</option>
+                        <option value="scheduled">Scheduled</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row mt-3 threshold-row" style="display: none;">
+                <div class="col-md-3">
+                    <label class="form-label">Event threshold</label>
+                    <input class="form-control" type="number" min="1" name="Notifications.Groups[__INDEX__].Threshold" value="5" />
+                </div>
+            </div>
+            <div class="row mt-3 interval-row" style="display: none;">
+                <div class="col-md-3">
+                    <label class="form-label">Interval</label>
+                    <select class="form-select" name="Notifications.Groups[__INDEX__].Interval">
+                        <option value="hour">Hourly</option>
+                        <option value="day">Daily</option>
+                        <option value="week">Weekly</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-6">
+                    <label class="form-label">Event sources</label>
+                    <select multiple class="form-select group-events" name="Notifications.Groups[__INDEX__].EventSources" size="5">
+                        @foreach (var ev in Model.EventTypes)
+                        {
+                            <option value="@ev.Value">@ev.Display</option>
+                        }
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Recipients</label>
+                    <select multiple class="form-select group-recipients" name="Notifications.Groups[__INDEX__].RecipientEmails" size="5"></select>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-danger mt-3 remove-group">Remove group</button>
+        </div>
+    </div>
+</template>
+
+@section Scripts
+{
+    <script>
+        function reindexRecipients() {
+            document.querySelectorAll('#recipients-list .recipient-row').forEach((row, index) => {
+                row.querySelector('input[name$="].Name"]').name = 'Notifications.Recipients[' + index + '].Name';
+                row.querySelector('input[name$="].Email"]').name = 'Notifications.Recipients[' + index + '].Email';
+            });
+            refreshGroupRecipients();
+        }
+
+        function reindexGroups() {
+            document.querySelectorAll('#groups-list .group-block').forEach((block, index) => {
+                block.querySelectorAll('[name^="Notifications.Groups["]').forEach(input => {
+                    input.name = input.name.replace(/Notifications\.Groups\[\d+\]/, 'Notifications.Groups[' + index + ']');
+                });
+            });
+        }
+
+        function getRecipients() {
+            return Array.from(document.querySelectorAll('#recipients-list .recipient-row')).map(row => ({
+                name: row.querySelector('input[name$="].Name"]').value,
+                email: row.querySelector('input[name$="].Email"]').value
+            })).filter(r => r.email);
+        }
+
+        function refreshGroupRecipients() {
+            const recipients = getRecipients();
+            document.querySelectorAll('.group-recipients').forEach(select => {
+                const selected = Array.from(select.selectedOptions).map(o => o.value);
+                select.innerHTML = '';
+                recipients.forEach(r => {
+                    const option = document.createElement('option');
+                    option.value = r.email;
+                    option.textContent = r.name + ' (' + r.email + ')';
+                    if (selected.includes(r.email)) option.selected = true;
+                    select.appendChild(option);
+                });
+            });
+        }
+
+        function updateGroupMode(select) {
+            const block = select.closest('.group-block');
+            const mode = select.value;
+            block.querySelector('.threshold-row').style.display = mode === 'grouped' ? '' : 'none';
+            block.querySelector('.interval-row').style.display = mode === 'scheduled' ? '' : 'none';
+        }
+
+        document.getElementById('add-recipient').addEventListener('click', () => {
+            const template = document.getElementById('recipient-template');
+            const html = template.innerHTML.replace(/__INDEX__/g, document.querySelectorAll('#recipients-list .recipient-row').length);
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            document.getElementById('recipients-list').appendChild(wrapper.firstElementChild);
+            reindexRecipients();
+        });
+
+        document.getElementById('recipients-list').addEventListener('click', e => {
+            if (e.target.classList.contains('remove-recipient')) {
+                e.target.closest('.recipient-row').remove();
+                reindexRecipients();
+            }
+        });
+
+        document.getElementById('recipients-list').addEventListener('input', e => {
+            if (e.target.classList.contains('recipient-email')) {
+                refreshGroupRecipients();
+            }
+        });
+
+        document.getElementById('add-group').addEventListener('click', () => {
+            const template = document.getElementById('group-template');
+            const index = document.querySelectorAll('#groups-list .group-block').length;
+            const html = template.innerHTML.replace(/__INDEX__/g, index);
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = html;
+            const block = wrapper.firstElementChild;
+            document.getElementById('groups-list').appendChild(block);
+            refreshGroupRecipients();
+            updateGroupMode(block.querySelector('.group-mode'));
+        });
+
+        document.getElementById('groups-list').addEventListener('click', e => {
+            if (e.target.classList.contains('remove-group')) {
+                e.target.closest('.group-block').remove();
+                reindexGroups();
+            }
+        });
+    </script>
+}

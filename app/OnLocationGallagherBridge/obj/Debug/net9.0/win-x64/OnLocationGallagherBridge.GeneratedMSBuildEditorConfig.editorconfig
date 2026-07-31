@@ -44,10 +44,6 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = UGFnZXNcSW5kZXguY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
-[D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/ManualSync.cshtml]
-build_metadata.AdditionalFiles.TargetPath = UGFnZXNcTWFudWFsU3luYy5jc2h0bWw=
-build_metadata.AdditionalFiles.CssScope = 
-
 [D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Mapping.cshtml]
 build_metadata.AdditionalFiles.TargetPath = UGFnZXNcTWFwcGluZy5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
@@ -56,12 +52,24 @@ build_metadata.AdditionalFiles.CssScope =
 build_metadata.AdditionalFiles.TargetPath = UGFnZXNcTWF0Y2hSZXZpZXcuY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
+[D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Notifications.cshtml]
+build_metadata.AdditionalFiles.TargetPath = UGFnZXNcTm90aWZpY2F0aW9ucy5jc2h0bWw=
+build_metadata.AdditionalFiles.CssScope = 
+
 [D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Privacy.cshtml]
 build_metadata.AdditionalFiles.TargetPath = UGFnZXNcUHJpdmFjeS5jc2h0bWw=
 build_metadata.AdditionalFiles.CssScope = 
 
 [D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Settings.cshtml]
 build_metadata.AdditionalFiles.TargetPath = UGFnZXNcU2V0dGluZ3MuY3NodG1s
+build_metadata.AdditionalFiles.CssScope = 
+
+[D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Setup.cshtml]
+build_metadata.AdditionalFiles.TargetPath = UGFnZXNcU2V0dXAuY3NodG1s
+build_metadata.AdditionalFiles.CssScope = 
+
+[D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Shared/_AuditPagination.cshtml]
+build_metadata.AdditionalFiles.TargetPath = UGFnZXNcU2hhcmVkXF9BdWRpdFBhZ2luYXRpb24uY3NodG1s
 build_metadata.AdditionalFiles.CssScope = 
 
 [D:/Software Development/Projects/OnLocation-Gallagher-Bridge/app/OnLocationGallagherBridge/Pages/Shared/_ConfigurationStatus.cshtml]

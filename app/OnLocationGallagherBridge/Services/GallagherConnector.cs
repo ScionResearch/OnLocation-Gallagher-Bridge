@@ -14,7 +14,7 @@ public record GallagherWriteResult(bool Success, int StatusCode, string? Error)
 
 public interface IGallagherConnector
 {
-    Task<bool> TestConnectionAsync(CancellationToken ct = default);
+    Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false);
     Task<JsonElement?> FindCardholderByEmailAsync(string email, CancellationToken ct = default);
     Task<JsonElement?> CreateCardholderAsync(object payload, CancellationToken ct = default);
     Task<GallagherWriteResult> UpdateCardholderAsync(string href, object payload, CancellationToken ct = default);
@@ -34,24 +34,28 @@ public class GallagherConnector : IGallagherConnector
     private readonly IHttpClientFactory _httpFactory;
     private readonly ConfigService _config;
     private readonly Serilog.ILogger _logger;
+    private readonly INotificationService _notifications;
     private string? _lastError;
     private JsonElement? _apiRoot;
+    private bool? _lastConnectionResult;
+    private readonly object _connectionLock = new();
 
-    public GallagherConnector(IHttpClientFactory httpFactory, ConfigService config, Serilog.ILogger? logger = null)
+    public GallagherConnector(IHttpClientFactory httpFactory, ConfigService config, INotificationService notifications, Serilog.ILogger? logger = null)
     {
         _httpFactory = httpFactory;
         _config = config;
+        _notifications = notifications;
         _logger = logger ?? Serilog.Log.Logger.ForContext<GallagherConnector>();
     }
 
     private GallagherConfig Cfg => _config.GetConfig().Gallagher;
 
-    public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
+    public async Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false)
     {
         try
         {
             _logger.Information("Testing Gallagher connection to {BaseUrl}", Cfg.BaseUrl);
-            if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "Gallagher BaseUrl not configured"; _logger.Warning("Gallagher BaseUrl is empty"); return false; }
+            if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "Gallagher BaseUrl not configured"; _logger.Warning("Gallagher BaseUrl is empty"); UpdateConnectionState(false, raiseNotifications); return false; }
 
             // Perform a fresh request rather than relying on the cached API root.
             var client = CreateClient();
@@ -62,6 +66,7 @@ public class GallagherConnector : IGallagherConnector
                 _lastError = $"Gallagher connection failed: {(int)response.StatusCode} {body}";
                 _logger.Warning("Gallagher connection test failed: {Error}", _lastError);
                 _apiRoot = null;
+                UpdateConnectionState(false, raiseNotifications);
                 return false;
             }
 
@@ -70,14 +75,47 @@ public class GallagherConnector : IGallagherConnector
             _apiRoot = doc.RootElement.Clone();
             _lastError = null;
             _logger.Information("Gallagher connection OK");
+            UpdateConnectionState(true, raiseNotifications);
             return true;
+        }
+        catch (OperationCanceledException)
+        {
+            _lastError = "Connection test was cancelled";
+            _logger.Debug("Gallagher connection test was cancelled");
+            UpdateConnectionState(false, raiseNotifications);
+            return false;
         }
         catch (Exception ex)
         {
             _lastError = ex.Message;
             _apiRoot = null;
             _logger.Error(ex, "Gallagher connection test failed");
+            UpdateConnectionState(false, raiseNotifications);
             return false;
+        }
+    }
+
+    private void UpdateConnectionState(bool ok, bool raiseNotifications)
+    {
+        bool? previous;
+        lock (_connectionLock)
+        {
+            previous = _lastConnectionResult;
+            _lastConnectionResult = ok;
+            if (!raiseNotifications) return;
+            if (previous is null) return;
+            if (previous == ok) return;
+        }
+        try
+        {
+            if (ok)
+                _notifications.RaiseEventAsync(NotificationEventType.ConnectionRestored, "Gallagher connection restored.").GetAwaiter().GetResult();
+            else
+                _notifications.RaiseEventAsync(NotificationEventType.ConnectionInterrupted, $"Gallagher connection interrupted. {_lastError}").GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to raise Gallagher connection notification");
         }
     }
 

@@ -17,14 +17,16 @@ public class JobProcessor : IJobProcessor
     private readonly IGallagherConnector _gallagher;
     private readonly ITransformEngine _transform;
     private readonly IAuditService _audit;
+    private readonly INotificationService _notifications;
     private readonly Serilog.ILogger _logger;
 
-    public JobProcessor(BridgeDbContext db, IGallagherConnector gallagher, ITransformEngine transform, IAuditService audit, Serilog.ILogger? logger = null)
+    public JobProcessor(BridgeDbContext db, IGallagherConnector gallagher, ITransformEngine transform, IAuditService audit, INotificationService notifications, Serilog.ILogger? logger = null)
     {
         _db = db;
         _gallagher = gallagher;
         _transform = transform;
         _audit = audit;
+        _notifications = notifications;
         _logger = logger ?? Serilog.Log.Logger.ForContext<JobProcessor>();
     }
 
@@ -126,6 +128,14 @@ public class JobProcessor : IJobProcessor
                 DurationMs = (int)stopwatch.ElapsedMilliseconds
             });
             _logger.Information("Profile {Profile} source {Source} ({Display}) queued for manual match", profile.Id, entityId, display);
+            try
+            {
+                await _notifications.RaiseEventAsync(NotificationEventType.AwaitingUserInput, $"Record {entityId} ({display}) in profile {profile.Id} is waiting for manual review.", ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to raise awaiting-user-input notification");
+            }
             return;
         }
 
@@ -192,6 +202,14 @@ public class JobProcessor : IJobProcessor
                     DurationMs = (int)stopwatch.ElapsedMilliseconds
                 });
                 _logger.Warning("Gallagher update failed for {Source} ({Display}): {Error}", entityId, display, result.Error);
+                try
+                {
+                    await _notifications.RaiseEventAsync(NotificationEventType.FailedTransaction, $"Update failed for {entityId} ({display}) in profile {profile.Id}: {result.Error}", ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to raise failed-transaction notification");
+                }
                 return;
             }
 
@@ -221,6 +239,14 @@ public class JobProcessor : IJobProcessor
                     DurationMs = (int)stopwatch.ElapsedMilliseconds
                 });
                 _logger.Warning("Gallagher create failed for {Source} ({Display}): {Error}", entityId, display, error);
+                try
+                {
+                    await _notifications.RaiseEventAsync(NotificationEventType.FailedTransaction, $"Create failed for {entityId} ({display}) in profile {profile.Id}: {error}", ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Failed to raise failed-transaction notification");
+                }
                 return;
             }
 

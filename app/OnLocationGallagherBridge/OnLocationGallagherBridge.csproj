@@ -9,6 +9,7 @@
     <PublishSingleFile>false</PublishSingleFile>
     <OutputType>Exe</OutputType>
     <UseAppHost>true</UseAppHost>
+    <ApplicationIcon>favicon.ico</ApplicationIcon>
     <SupportedOSPlatform>windows</SupportedOSPlatform>
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>

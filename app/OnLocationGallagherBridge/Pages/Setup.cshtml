@@ -7,8 +7,8 @@
     var mappingComplete = Model.Status.FieldMapping == ConfigurationStatus.Complete;
 }
 
-<div class="text-center mb-4">
-    <h1 class="display-6">Setup</h1>
+<div class="page-header">
+    <h2>Setup</h2>
     <p class="text-muted">Follow the steps to connect OnLocation to Gallagher</p>
 </div>
 
@@ -83,5 +83,13 @@
         <h5 class="card-title">Overall setup status</h5>
         <p class="card-text">The bridge is ready to sync when all steps show <span class="status-text text-success">Complete</span>.</p>
         <p class="mb-0">Current state: <partial name="_ConfigurationStatus" model="Model.Status.Overall" /></p>
+    </div>
+</div>
+
+<div class="card mt-4 shadow-sm">
+    <div class="card-body text-center">
+        <h5 class="card-title">Optional: Notifications</h5>
+        <p class="card-text text-muted">Configure email alerts for connection issues, failed transactions and other events.</p>
+        <a class="btn btn-outline-primary btn-sm" asp-page="/Notifications">Configure notifications</a>
     </div>
 </div>

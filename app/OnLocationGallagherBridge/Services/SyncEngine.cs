@@ -10,17 +10,28 @@ public class SyncEngine : BackgroundService
     private readonly IServiceProvider _services;
     private readonly ILogger<SyncEngine> _logger;
     private readonly ISyncActivity _activity;
+    private readonly INotificationService _notifications;
 
-    public SyncEngine(IServiceProvider services, ILogger<SyncEngine> logger, ISyncActivity activity)
+    public SyncEngine(IServiceProvider services, ILogger<SyncEngine> logger, ISyncActivity activity, INotificationService notifications)
     {
         _services = services;
         _logger = logger;
         _activity = activity;
+        _notifications = notifications;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Sync engine started");
+        try
+        {
+            await _notifications.RaiseEventAsync(NotificationEventType.ServiceRestarted, "The OnLocation-Gallagher Bridge sync service has started.", stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to raise service-restarted notification");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try

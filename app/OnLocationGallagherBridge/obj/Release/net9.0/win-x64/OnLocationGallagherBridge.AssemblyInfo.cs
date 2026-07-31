@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("OnLocationGallagherBridge")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+18ad059c721ee183a54e15d7ad4280bdb936802a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+519647adef1d70eea22d2db558842de803a5c979")]
 [assembly: System.Reflection.AssemblyProductAttribute("OnLocationGallagherBridge")]
 [assembly: System.Reflection.AssemblyTitleAttribute("OnLocationGallagherBridge")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

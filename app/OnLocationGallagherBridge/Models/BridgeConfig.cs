@@ -10,6 +10,7 @@ public class BridgeConfig
     public SmtpConfig Smtp { get; set; } = new();
     public WebHostConfig WebHost { get; set; } = new();
     public LoggingConfig Logging { get; set; } = new();
+    public NotificationConfig Notifications { get; set; } = new();
 }
 
 public class OnLocationConfig
@@ -53,4 +54,38 @@ public class LoggingConfig
     public string? Path { get; set; } = "";
     public int RetentionDays { get; set; } = 30;
     public string? MinimumLevel { get; set; } = "Information";
+}
+
+public class NotificationConfig
+{
+    public bool Enabled { get; set; }
+    public int MaxEmailsPerHour { get; set; } = 60;
+    public List<NotificationRecipient> Recipients { get; set; } = new();
+    public List<NotificationGroup> Groups { get; set; } = new();
+}
+
+public class NotificationRecipient
+{
+    public string Name { get; set; } = "";
+    public string Email { get; set; } = "";
+}
+
+public class NotificationGroup
+{
+    public string Name { get; set; } = "";
+    public int Priority { get; set; } = 1;
+    public List<string> EventSources { get; set; } = new();
+    public string Mode { get; set; } = "every"; // every, grouped, scheduled
+    public int Threshold { get; set; } = 1;
+    public string Interval { get; set; } = "hour"; // hour, day, week
+    public List<string> RecipientEmails { get; set; } = new();
+}
+
+public enum NotificationEventType
+{
+    ConnectionInterrupted,
+    ConnectionRestored,
+    FailedTransaction,
+    AwaitingUserInput,
+    ServiceRestarted
 }

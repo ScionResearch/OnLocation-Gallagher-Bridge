@@ -8,7 +8,7 @@ namespace OnLocationGallagherBridge.Services;
 
 public interface IOnLocationConnector
 {
-    Task<bool> TestConnectionAsync(CancellationToken ct = default);
+    Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false);
     Task<IReadOnlyList<JsonElement>> GetStaffAsync(SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
     Task<IReadOnlyList<JsonElement>> GetContractorMembersAsync(SyncBookmark bookmark, CancellationToken ct = default, int limit = OnLocationConnector.DefaultPageSize);
     Task<IReadOnlyList<JsonElement>> GetInductionsAsync(SyncBookmark bookmark, CancellationToken ct = default);
@@ -46,38 +46,76 @@ public class OnLocationConnector : IOnLocationConnector
     private readonly ConfigService _config;
     private readonly Serilog.ILogger _logger;
     private readonly ISyncActivity _activity;
+    private readonly INotificationService _notifications;
     private string? _lastError;
+    private bool? _lastConnectionResult;
+    private readonly object _connectionLock = new();
 
-    public OnLocationConnector(IHttpClientFactory httpFactory, ConfigService config, ISyncActivity activity, Serilog.ILogger? logger = null)
+    public OnLocationConnector(IHttpClientFactory httpFactory, ConfigService config, ISyncActivity activity, INotificationService notifications, Serilog.ILogger? logger = null)
     {
         _httpFactory = httpFactory;
         _config = config;
         _activity = activity;
+        _notifications = notifications;
         _logger = logger ?? Serilog.Log.Logger.ForContext<OnLocationConnector>();
     }
 
     private OnLocationConfig Cfg => _config.GetConfig().OnLocation;
 
-    public async Task<bool> TestConnectionAsync(CancellationToken ct = default)
+    public async Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false)
     {
         try
         {
             var mode = Cfg.AuthMode.ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "OnLocation BaseUrl not configured"; return false; }
+            if (string.IsNullOrWhiteSpace(Cfg.BaseUrl)) { _lastError = "OnLocation BaseUrl not configured"; UpdateConnectionState(false, raiseNotifications); return false; }
             if (mode == "oauth2" && (string.IsNullOrWhiteSpace(Cfg.ClientId) || string.IsNullOrWhiteSpace(Cfg.ClientSecret)))
-                { _lastError = "OAuth2 Client Id and Secret are required"; return false; }
+                { _lastError = "OAuth2 Client Id and Secret are required"; UpdateConnectionState(false, raiseNotifications); return false; }
             if ((mode == "apikey" || mode == "basic") && string.IsNullOrWhiteSpace(Cfg.ApiKey))
-                { _lastError = "API Key is required for API key / Basic auth"; return false; }
+                { _lastError = "API Key is required for API key / Basic auth"; UpdateConnectionState(false, raiseNotifications); return false; }
 
             var client = await CreateClientAsync(ct);
             var (response, testBody) = await SendLoggedAsync(client, new HttpRequestMessage(HttpMethod.Get, "staff?limit=1"), ct);
-            return await HandleResponseAsync(response, testBody, ct);
+            var ok = await HandleResponseAsync(response, testBody, ct);
+            UpdateConnectionState(ok, raiseNotifications);
+            return ok;
+        }
+        catch (OperationCanceledException)
+        {
+            _lastError = "Connection test was cancelled";
+            _logger.Debug("OnLocation connection test was cancelled");
+            UpdateConnectionState(false, raiseNotifications);
+            return false;
         }
         catch (Exception ex)
         {
             _lastError = ex.Message;
             _logger.Error(ex, "OnLocation connection test failed");
+            UpdateConnectionState(false, raiseNotifications);
             return false;
+        }
+    }
+
+    private void UpdateConnectionState(bool ok, bool raiseNotifications)
+    {
+        bool? previous;
+        lock (_connectionLock)
+        {
+            previous = _lastConnectionResult;
+            _lastConnectionResult = ok;
+            if (!raiseNotifications) return;
+            if (previous is null) return;
+            if (previous == ok) return;
+        }
+        try
+        {
+            if (ok)
+                _notifications.RaiseEventAsync(NotificationEventType.ConnectionRestored, "OnLocation connection restored.").GetAwaiter().GetResult();
+            else
+                _notifications.RaiseEventAsync(NotificationEventType.ConnectionInterrupted, $"OnLocation connection interrupted. {_lastError}").GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to raise OnLocation connection notification");
         }
     }
 
