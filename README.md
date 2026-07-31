@@ -16,10 +16,12 @@ A Windows service that synchronises people and induction data from **MRI OnLocat
 - [Competency Synchronisation](#competency-synchronisation)
 - [Resilience and Error Handling](#resilience-and-error-handling)
 - [Logging and Diagnostics](#logging-and-diagnostics)
+- [Tray Status Widget](#tray-status-widget)
 - [Web UI](#web-ui)
 - [Configuration](#configuration)
 - [Data Locations](#data-locations)
 - [Build and Deploy](#build-and-deploy)
+- [Installer Package](#installer-package)
 - [First-Run Setup](#first-run-setup)
 - [Testing and Reset](#testing-and-reset)
 - [Project Structure](#project-structure)
@@ -29,7 +31,7 @@ A Windows service that synchronises people and induction data from **MRI OnLocat
 
 ## Overview
 
-The bridge runs as a background Windows service with an ASP.NET Core web UI on port 5000. It maintains one or more **sync profiles**, each defining a source entity type (Staff or Contractor Members), the inductions to track, a field mapping, match rules, and a polling schedule. On each poll the bridge:
+The bridge runs as a background Windows service with an ASP.NET Core web UI (default port 5000). It maintains one or more **sync profiles**, each defining a source entity type (Staff or Contractor Members), the inductions to track, a field mapping, match rules, and a polling schedule. On each poll the bridge:
 
 1. Fetches new or updated records from OnLocation (incrementally, using bookmarks).
 2. Reconciles each record against existing Gallagher cardholders using configurable match rules.
@@ -38,6 +40,8 @@ The bridge runs as a background Windows service with an ASP.NET Core web UI on p
 5. Logs every action to the audit trail and surfaces failures on the Exceptions page.
 
 Unmatched records are queued for manual review on the **Initial Record Match** page, where an operator links each OnLocation person to an existing Gallagher cardholder (or excludes them, or creates a new one). Once the initial match is complete, the profile enters routine incremental sync.
+
+Deployment is via a WiX-based MSI that installs the service, a system tray status widget, a Start Menu shortcut, and a Windows Firewall exception for the web UI port.
 
 ---
 
@@ -78,7 +82,7 @@ Unmatched records are queued for manual review on the **Initial Record Match** p
 └─────────────────────────────────────────────────────────────┘
 ```
 
-All components run in a single process. The sync engine is a `BackgroundService` that wakes every minute, checks which profiles are due, and processes them sequentially. The web UI is served by the same process, so operators can configure, monitor, and trigger syncs without a separate tool.
+All components run in a single process. The sync engine is a `BackgroundService` that wakes every minute, checks which profiles are due, and processes them sequentially. The web UI is served by the same process, so operators can configure, monitor, and trigger syncs without a separate tool. A separate system tray application reads the service status file and lets users start, stop, restart, and enable/disable the service, as well as open the web UI at the configured port.
 
 ---
 
@@ -92,7 +96,7 @@ All components run in a single process. The sync engine is a `BackgroundService`
 2. For each due profile, calls `OnLocationSourceService.GetRecordsAsync` to fetch new records.
 3. Queues each record as a `SyncJob` (or updates an existing pending job for the same source ID).
 4. Processes each pending job through `JobProcessor`, which transforms and writes to Gallagher.
-5. Updates the profile's `LastRun` and `NextRun` timestamps.
+5. Updates the profile's `LastRun` and `NextRun` timestamps; when a full sync runs, it records `LastFullRun` and schedules the next full run from that point.
 6. Reports progress through `ISyncActivity` so the dashboard can show live status.
 
 Profiles that have not completed their initial record match are skipped — the engine logs this and moves on.
@@ -136,7 +140,7 @@ Key operations:
 | `GetPersonalDataFieldsAsync` | All personal data field definitions. |
 | `GetCardholderAsync` | Fetch a single cardholder with optional `expand` (e.g. `competencies`). |
 
-TLS verification can be disabled for self-signed Command Centre certificates via the Gallagher config.
+The API key is sent as the password in **Basic auth** with an empty username (`Authorization: Basic :<api-key-base64>`). TLS verification can be disabled via the Gallagher config for self-signed Command Centre certificates. Outbound connections prefer IPv4 DNS resolution to avoid connection failures when a hostname resolves to IPv6 but Command Centre only listens on IPv4.
 
 ### Identity Matcher
 
@@ -246,8 +250,8 @@ All state is stored in a SQLite database (`bridge.db`). EF Core code-first with 
 
 Two default profiles are seeded on first run:
 
-- **employees** — Staff entity type, polls the `staff` endpoint.
-- **contractor-members** — SpMember entity type, polls the `sp/member` endpoint.
+- **Staff** — Staff entity type, polls the `staff` endpoint.
+- **Contractors** — SpMember entity type, polls the `sp/member` endpoint.
 
 Both are disabled by default. Induction-holder profiles are created from the Mapping page when an operator configures induction-based field maps.
 
@@ -379,9 +383,26 @@ The **Audit** page provides a filterable, searchable view of every sync action w
 
 ---
 
+## Tray Status Widget
+
+A system tray application (`OnLocationGallagherBridge.Tray`) is installed with the MSI and can also be launched from the Start Menu. It reads the service status file written by the bridge and displays:
+
+- **Icon colour** — green when the service is running and both connectors are OK, yellow when the service is running but a connector or configuration is unhealthy, red when the service is stopped or not installed, and gray when the status is unknown.
+- **Service status** — the actual Windows service state (`Running`, `Stopped`, etc.) and start type.
+- **Live activity** — current sync phase, progress, and last-run summary.
+
+Right-click the tray icon to:
+
+- Open the Bridge web UI in the default browser (uses the configured URL, not a hard-coded port).
+- Start / stop / restart the service.
+- Enable / disable automatic startup.
+- Refresh the status.
+
+The tray widget checks the service state directly via `System.ServiceProcess.ServiceController`, so stopping the service from any tool is reflected immediately in the widget.
+
 ## Web UI
 
-The web UI is served at `http://localhost:5000` and provides the following pages:
+The web UI is served at `http://localhost:5000` (or the configured URL) and provides the following pages:
 
 | Page | Purpose |
 |------|---------|
@@ -412,8 +433,8 @@ All credentials and settings are stored in an encrypted JSON file (see [Config S
 ### Gallagher
 
 - **Base URL** — the Command Centre server URL.
-- **API Key** — the operator's API key, used as the Basic auth password with an empty username.
-- **Disable TLS Verification** — for self-signed certificates.
+- **API Key** — the operator's API key. It is sent as the password in Basic auth with an empty username.
+- **Disable TLS Verification** — for self-signed or untrusted Command Centre certificates.
 
 ### SMTP (Alerts)
 
@@ -431,8 +452,11 @@ All credentials and settings are stored in an encrypted JSON file (see [Config S
 ### Per-Profile (Dashboard)
 
 - **Enabled** — toggle sync on/off.
-- **Polling Interval** — 1 minute to 1 month (configurable from the dashboard).
-- **Sync Window Days** — how far back the induction holder scan looks for completed inductions (default 7).
+- **Fast Sync Interval** — how often to poll for new/updated records (1 to 60 minutes).
+- **Full Sync Interval** — how often to re-scan the full lookback window (daily to monthly).
+- **Full Sync Time** — time of day when the full sync should run.
+- **Full Sync Lookback** — how many months back the full sync looks for completed inductions (`0` means all existing records).
+- **Sync Window Days** — how far back a routine fast sync looks for completed inductions (default 7).
 - **Bridge Sync Message Target** — the Gallagher cardholder field (description or a personal data field) to write timestamped `Created by OnLocation Bridge` / `Updated by OnLocation Bridge` messages into. Leave empty to leave cardholder fields untouched.
 
 ---
@@ -446,8 +470,9 @@ All persistent data is stored under `%ProgramData%\OnLocation-Gallagher-Bridge\`
 | `bridge.db` | SQLite database (profiles, mappings, jobs, audit logs, match queue). |
 | `config\config.json.crypt` | Encrypted configuration file (DPAPI LocalMachine scope). |
 | `logs\bridge-YYYYMMDD.log` | Rolling daily log files (30-day retention). |
+| `service-status.json` | Status snapshot written for the tray widget. |
 
-The install directory is `C:\Program Files\OnLocation-Gallagher-Bridge\`.
+The install directory is `C:\Program Files\OnLocation-Gallagher Bridge\`. The tray widget is installed under `C:\Program Files\OnLocation-Gallagher Bridge\Tray\`.
 
 ---
 
@@ -457,13 +482,14 @@ The install directory is `C:\Program Files\OnLocation-Gallagher-Bridge\`.
 
 - **.NET 9 SDK** — to build and publish.
 - **Windows** — the bridge targets `win-x64` and uses Windows-specific features (DPAPI, Windows Service hosting).
-- **PowerShell 5.1+** — for the install/uninstall scripts.
+- **WiX Toolset v4** — required only when rebuilding the MSI installer (`wix.exe` must be on PATH).
+- **PowerShell 5.1+** — for the build script.
 - **Administrator privileges** — required to install the service and set ACLs.
 
 ### Publish
 
 ```powershell
-cd "app"
+cd "app\OnLocationGallagherBridge"
 dotnet publish -c Release
 ```
 
@@ -471,38 +497,6 @@ The self-contained publish output is placed at:
 ```
 app\OnLocationGallagherBridge\bin\Release\net9.0\win-x64\publish\
 ```
-
-### Install as a Windows Service
-
-Run PowerShell as Administrator:
-
-```powershell
-cd "app"
-.\install-service.ps1
-```
-
-The script:
-
-1. Copies the publish output to `C:\Program Files\OnLocation-Gallagher-Bridge\`.
-2. Sets ACLs for Administrators and Network Service.
-3. Registers the service as `OnLocation-Gallagher-Bridge` (Automatic startup, runs as `NT AUTHORITY\NETWORK SERVICE`).
-4. Creates the `%ProgramData%\OnLocation-Gallagher-Bridge\` data directory with appropriate ACLs.
-5. Opens firewall port 5000.
-6. Starts the service.
-
-Optional parameters:
-
-```powershell
-.\install-service.ps1 -ServiceName "CustomName" -Port 6000
-```
-
-### Uninstall
-
-```powershell
-.\uninstall-service.ps1
-```
-
-Stops and removes the service, deletes the install directory, and removes the firewall rule. Data in `%ProgramData%` is preserved.
 
 ### Run from the Command Line
 
@@ -517,14 +511,60 @@ The web UI is available at `http://localhost:5000`.
 
 ---
 
+## Installer Package
+
+A WiX Toolset v4 MSI package installs the bridge service, the tray status widget, a Start Menu shortcut, and a Windows Firewall exception.
+
+### Build the MSI
+
+```powershell
+cd "app\OnLocationGallagherBridge.Installer"
+.\build-installer.ps1
+```
+
+The MSI is written to `OnLocationGallagherBridge.Installer.msi` in the same directory. The default version number is daily-incrementing, so each day the MSI is treated as an upgrade. You can override it:
+
+```powershell
+.\build-installer.ps1 -Version "1.2.3.0"
+```
+
+### Install
+
+Run the MSI from an elevated command prompt:
+
+```powershell
+msiexec /i "OnLocationGallagherBridge.Installer.msi" /qn /norestart
+```
+
+Or double-click the MSI. The installer:
+
+1. Installs the service executable to `C:\Program Files\OnLocation-Gallagher Bridge\`.
+2. Installs the tray widget to `C:\Program Files\OnLocation-Gallagher Bridge\Tray\`.
+3. Registers the service as `OnLocationGallagherBridge` with Automatic startup.
+4. Adds a Start Menu shortcut for the tray widget.
+5. Adds a Windows Firewall exception tied to the service executable so the web UI port is reachable.
+6. Starts the service.
+
+Major upgrades are supported. Re-running `msiexec` with a new version uninstalls the previous version and installs the new one, leaving `%ProgramData%\OnLocation-Gallagher-Bridge\` data intact.
+
+### Uninstall
+
+```powershell
+msiexec /x "OnLocationGallagherBridge.Installer.msi" /qn /norestart
+```
+
+Or use **Settings > Apps**. Data in `%ProgramData%\OnLocation-Gallagher-Bridge\` is preserved.
+
+---
+
 ## First-Run Setup
 
-1. **Open the web UI** at `http://localhost:5000`.
+1. **Open the web UI** from the system tray widget, or browse to `http://localhost:5000` (or the configured URL) on the server.
 2. **Configure connectors** on the **Connector Settings** page:
    - Enter OnLocation credentials and Gallagher Command Centre credentials.
-   - Save settings. (Connection tests are still available but no longer required before Initial Record Match; the match preflight validates both connections automatically.)
+   - Save settings.
 3. **Configure field mappings** on the **Field Mapping** page:
-   - Select a profile (e.g. `employees` or `contractor-members`).
+   - Select a profile (e.g. `Staff` or `Contractors`).
    - Choose the inductions to track (if applicable).
    - Build the source-to-target field map.
    - Set the default division and access groups for new cardholders.
@@ -534,7 +574,7 @@ The web UI is available at `http://localhost:5000`.
    - Click **Preview** to see candidate matches.
    - Review each record: approve the suggested match, choose a different cardholder, create a new one, or exclude.
    - Complete the match to enable routine sync.
-5. **Enable the profile** on the **Dashboard** and set the polling interval and sync window.
+5. **Enable the profile** on the **Dashboard** and set the fast/full sync intervals, full-sync time, and sync window.
 6. **Monitor** the dashboard's live activity card and the **Audit** page.
 
 ---
@@ -556,10 +596,8 @@ Each action requires confirmation. These are outside the main settings form so a
 ```
 OnLocation-Gallagher-Bridge/
 ├── app/
-│   ├── install-service.ps1              # Windows service installation script
-│   ├── uninstall-service.ps1            # Windows service removal script
-│   ├── OnLocationGallagherBridge.sln     # Visual Studio solution
-│   └── OnLocationGallagherBridge/
+│   ├── OnLocationGallagherBridge.sln                    # Visual Studio solution
+│   ├── OnLocationGallagherBridge/
 │       ├── Program.cs                    # App startup, DI, logging, DB init
 │       ├── OnLocationGallagherBridge.csproj
 │       ├── Data/
@@ -590,6 +628,13 @@ OnLocation-Gallagher-Bridge/
 │       │   └── Shared/_Layout.cshtml     # Nav layout
 │       ├── wwwroot/                      # Static assets (CSS, JS, Bootstrap)
 │       └── appsettings.json
+│   ├── OnLocationGallagherBridge.Tray/   # System tray status widget
+│   │   ├── Program.cs
+│   │   └── OnLocationGallagherBridge.Tray.csproj
+│   └── OnLocationGallagherBridge.Installer/  # WiX v4 MSI package
+│       ├── build-installer.ps1
+│       ├── Package.wxs
+│       └── Assets/
 ├── docs/
 │   ├── bridge-design-plan.md             # Original design document
 │   └── bridge-build-guide.md             # Build phase guide
@@ -612,4 +657,6 @@ OnLocation-Gallagher-Bridge/
 | MailKit | SMTP alert emails |
 | Windows DPAPI | Credential encryption at rest |
 | Windows Services | Background service hosting |
+| WiX Toolset v4 | MSI installer package |
+| System.ServiceProcess.ServiceController | Tray app service control |
 | Polly | HTTP resilience policies |
