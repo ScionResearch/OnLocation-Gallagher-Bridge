@@ -1,4 +1,4 @@
-# OnLocation–Gallagher Bridge
+# <img src="app/OnLocationGallagherBridge/wwwroot/images/icon-200px.png" width="200" alt="OnLocation-Gallagher Bridge icon"> OnLocation–Gallagher Bridge
 
 A Windows service that synchronises people and induction data from **MRI OnLocation** (formerly WhosOnLocation) into **Gallagher Command Centre** cardholder records. The bridge polls OnLocation for new and updated records, reconciles each person against an existing Gallagher cardholder, transforms the source fields according to a configurable mapping, and writes the result to Command Centre via its REST API.
 
