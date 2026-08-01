@@ -444,8 +444,11 @@ public class GallagherConnector : IGallagherConnector
         if (string.IsNullOrWhiteSpace(Cfg.BaseUrl))
             throw new InvalidOperationException("Gallagher BaseUrl is not configured.");
 
+        var baseUri = new Uri(Cfg.BaseUrl.TrimEnd('/') + "/");
+        var builder = new UriBuilder(baseUri.Scheme, baseUri.Host, Cfg.Port, baseUri.AbsolutePath);
+
         var client = _httpFactory.CreateClient("Gallagher");
-        client.BaseAddress = new Uri(Cfg.BaseUrl.TrimEnd('/') + "/");
+        client.BaseAddress = builder.Uri;
         client.Timeout = TimeSpan.FromMinutes(2);
         client.DefaultRequestHeaders.Accept.Clear();
         client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));

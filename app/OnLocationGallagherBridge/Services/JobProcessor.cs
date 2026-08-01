@@ -140,6 +140,32 @@ public class JobProcessor : IJobProcessor
         }
 
         var payload = await _transform.BuildCardholderPayloadAsync(transformed, mapping.GallagherHref, ct);
+        var bridgeMessageField = TransformEngine.ToGallagherFieldName(profile.BridgeMessageTarget ?? string.Empty);
+
+        if (!string.IsNullOrEmpty(mapping.GallagherHref) &&
+            await IsCardholderUnchangedAsync(mapping.GallagherHref, payload, bridgeMessageField, ct))
+        {
+            job.Status = "Complete";
+            job.UpdatedAt = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            await _audit.LogAsync(new AuditEntry
+            {
+                CorrelationId = correlationId,
+                ProfileId = profile.Id,
+                SourceId = entityId ?? "",
+                SourceDisplay = display,
+                Action = "NoChange",
+                Outcome = "Success",
+                BeforeJson = job.PayloadJson,
+                AfterJson = JsonSerializer.Serialize(payload),
+                GallagherHref = mapping.GallagherHref,
+                Message = "No changes detected; skipped Gallagher update.",
+                DurationMs = (int)stopwatch.ElapsedMilliseconds
+            });
+            _logger.Information("Profile {Profile} source {Source} ({Display}) already in sync with Gallagher; skipping update", profile.Id, entityId, display);
+            return;
+        }
+
         ApplyBridgeMessage(profile, payload, string.IsNullOrEmpty(mapping.GallagherHref) ? "Created" : "Updated");
         var payloadJson = JsonSerializer.Serialize(payload);
 
@@ -354,6 +380,109 @@ public class JobProcessor : IJobProcessor
             }
         }
         return null;
+    }
+
+    private async Task<bool> IsCardholderUnchangedAsync(string href, Dictionary<string, object?> payload, string? excludedField, CancellationToken ct)
+    {
+        if (payload.Count == 0) return true;
+
+        var expand = new List<string>();
+        if (payload.Any(kvp => kvp.Key.StartsWith("@", StringComparison.OrdinalIgnoreCase))) expand.Add("personalDataFields");
+        if (payload.ContainsKey("competencies")) expand.Add("competencies");
+
+        try
+        {
+            var current = await _gallagher.GetCardholderAsync(href, expand.Count > 0 ? string.Join(",", expand) : null, ct);
+            if (!current.HasValue) return false;
+
+            foreach (var kvp in payload)
+            {
+                if (string.Equals(kvp.Key, excludedField, StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(kvp.Key, "competencies", StringComparison.OrdinalIgnoreCase)) return false;
+
+                var currentValue = GetCardholderProperty(current.Value, kvp.Key);
+                if (!ValuesEqual(currentValue, kvp.Value)) return false;
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to fetch existing cardholder for no-change comparison; proceeding with update");
+            return false;
+        }
+    }
+
+    private static JsonElement? GetCardholderProperty(JsonElement cardholder, string key)
+    {
+        if (cardholder.ValueKind != JsonValueKind.Object) return null;
+
+        if (key.StartsWith("@", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var property in cardholder.EnumerateObject())
+            {
+                if (string.Equals(property.Name, key, StringComparison.OrdinalIgnoreCase))
+                    return property.Value;
+            }
+            return null;
+        }
+
+        if (cardholder.TryGetProperty(key, out var value)) return value;
+        return null;
+    }
+
+    private static bool ValuesEqual(JsonElement? current, object? desired)
+    {
+        var desiredElement = ToJsonElement(desired);
+        if (current is null && desiredElement.ValueKind == JsonValueKind.Null) return true;
+        if (current is null || desiredElement.ValueKind == JsonValueKind.Null) return false;
+        return JsonEquals(current.Value, desiredElement);
+    }
+
+    private static JsonElement ToJsonElement(object? value)
+    {
+        if (value is null) return JsonDocument.Parse("null").RootElement.Clone();
+        if (value is JsonElement element) return element.Clone();
+        var json = JsonSerializer.Serialize(value);
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
+
+    private static bool JsonEquals(JsonElement a, JsonElement b)
+    {
+        if (a.ValueKind != b.ValueKind) return false;
+
+        switch (a.ValueKind)
+        {
+            case JsonValueKind.String:
+                return string.Equals(a.GetString(), b.GetString(), StringComparison.Ordinal);
+            case JsonValueKind.Number:
+                return a.GetDecimal() == b.GetDecimal();
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+            case JsonValueKind.Null:
+                return true;
+            case JsonValueKind.Array:
+                var aArray = a.EnumerateArray().ToList();
+                var bArray = b.EnumerateArray().ToList();
+                if (aArray.Count != bArray.Count) return false;
+                for (var i = 0; i < aArray.Count; i++)
+                {
+                    if (!JsonEquals(aArray[i], bArray[i])) return false;
+                }
+                return true;
+            case JsonValueKind.Object:
+                var aProps = a.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
+                var bProps = b.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
+                if (aProps.Count != bProps.Count) return false;
+                foreach (var prop in aProps)
+                {
+                    if (!bProps.TryGetValue(prop.Key, out var bValue)) return false;
+                    if (!JsonEquals(prop.Value, bValue)) return false;
+                }
+                return true;
+            default:
+                return a.GetRawText() == b.GetRawText();
+        }
     }
 }
 

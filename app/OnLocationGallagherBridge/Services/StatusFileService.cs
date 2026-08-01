@@ -59,9 +59,8 @@ public class StatusFileService : BackgroundService
         var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
         var cfg = config.GetConfig();
 
-        var urls = cfg.WebHost.Urls;
-        if (string.IsNullOrWhiteSpace(urls)) urls = "http://*:5000";
-        var firstUrl = urls.Split(';', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim() ?? "http://*:5000";
+        var scheme = cfg.WebHost.Https.Enabled ? "https" : "http";
+        var firstUrl = $"{scheme}://*:{cfg.WebHost.Port}";
 
         var overall = ConfigurationStatus.NotConfigured.ToString();
         try

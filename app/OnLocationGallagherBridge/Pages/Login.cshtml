@@ -1,0 +1,41 @@
+@page
+@model OnLocationGallagherBridge.Pages.LoginModel
+@{
+    ViewData["Title"] = "Login";
+    Layout = "_LayoutBlank";
+}
+
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card shadow-sm">
+            <div class="card-body">
+                <h4 class="card-title text-center">OnLocation-Gallagher Bridge</h4>
+                <p class="text-muted text-center small">Sign in to continue</p>
+
+                @if (!Model.AuthEnabled)
+                {
+                    <div class="alert alert-warning">Authentication is currently disabled.</div>
+                }
+                else
+                {
+                    @if (!string.IsNullOrEmpty(Model.ErrorMessage))
+                    {
+                        <div class="alert alert-danger">@Model.ErrorMessage</div>
+                    }
+
+                    <form method="post" asp-route-returnUrl="@Model.ReturnUrl">
+                        <div class="mb-3">
+                            <label class="form-label" asp-for="Username"></label>
+                            <input class="form-control" asp-for="Username" autofocus />
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" asp-for="Password"></label>
+                            <input class="form-control" type="password" asp-for="Password" />
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100">Sign in</button>
+                    </form>
+                }
+            </div>
+        </div>
+    </div>
+</div>

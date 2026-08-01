@@ -1,0 +1,126 @@
+@page
+@model OnLocationGallagherBridge.Pages.UsersModel
+@{
+    ViewData["Title"] = "Users";
+}
+
+<div class="page-header">
+    <h2>Local Users</h2>
+    <p class="text-muted">Manage who can access the bridge web interface.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.Message))
+{
+    <div class="alert alert-info">@Model.Message</div>
+}
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="card-title">Add User</h5>
+        <form method="post" asp-page-handler="Add">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label">Username</label>
+                    <input class="form-control" asp-for="NewUsername" required />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Password</label>
+                    <input class="form-control" type="password" asp-for="NewPassword" required />
+                </div>
+                <div class="col-md-2">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="NewIsAdmin" />
+                        <label class="form-check-label" asp-for="NewIsAdmin">Admin</label>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">Add</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h5 class="card-title">Existing Users</h5>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Enabled</th>
+                    <th>Admin</th>
+                    <th>Must Change Password</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var user in Model.Users)
+                {
+                    <tr>
+                        <td>@user.Username</td>
+                        <td>
+                            <form method="post" asp-page-handler="ToggleEnabled" class="d-inline">
+                                <input type="hidden" name="username" value="@user.Username" />
+                                <button type="submit" class="btn btn-sm @(user.IsEnabled ? "btn-success" : "btn-outline-secondary")">
+                                    @(user.IsEnabled ? "Yes" : "No")
+                                </button>
+                            </form>
+                        </td>
+                        <td>
+                            <form method="post" asp-page-handler="ToggleAdmin" class="d-inline">
+                                <input type="hidden" name="username" value="@user.Username" />
+                                <button type="submit" class="btn btn-sm @(user.IsAdmin ? "btn-success" : "btn-outline-secondary")" @(user.Username.Equals(User.Identity?.Name, StringComparison.OrdinalIgnoreCase) ? "disabled" : "")>
+                                    @(user.IsAdmin ? "Yes" : "No")
+                                </button>
+                            </form>
+                        </td>
+                        <td>@(user.RequirePasswordChange ? "Yes" : "No")</td>
+                        <td class="text-end">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#resetModal" data-username="@user.Username">Reset Password</button>
+                            <form method="post" asp-page-handler="Delete" class="d-inline" onsubmit="return confirm('Delete this user?');">
+                                <input type="hidden" name="username" value="@user.Username" />
+                                <button type="submit" class="btn btn-sm btn-danger" @(user.Username.Equals(User.Identity?.Name, StringComparison.OrdinalIgnoreCase) ? "disabled" : "")>Delete</button>
+                            </form>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="modal fade" id="resetModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" asp-page-handler="ResetPassword" class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Reset Password</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="resetUsername" name="username" />
+                <div class="mb-3">
+                    <label class="form-label">New Password</label>
+                    <input class="form-control" type="password" name="newPassword" required />
+                </div>
+                <p class="text-muted small">The user will be required to change this password on next login.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary">Reset</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+@section Scripts
+{
+    <script>
+        var resetModal = document.getElementById('resetModal');
+        resetModal.addEventListener('show.bs.modal', function (event) {
+            var button = event.relatedTarget;
+            var username = button.getAttribute('data-username');
+            resetModal.querySelector('#resetUsername').value = username;
+        });
+    </script>
+}

@@ -15,6 +15,11 @@ namespace OnLocationGallagherBridge.Models;
 [JsonSerializable(typeof(List<FieldMapRuleDto>))]
 [JsonSerializable(typeof(FieldMapRuleDto))]
 [JsonSerializable(typeof(List<MatchRuleDto>))]
+[JsonSerializable(typeof(WebHostConfig))]
+[JsonSerializable(typeof(HttpsConfig))]
+[JsonSerializable(typeof(AuthConfig))]
+[JsonSerializable(typeof(WebUser))]
+[JsonSerializable(typeof(List<WebUser>))]
 internal partial class SourceGenerationContext : JsonSerializerContext
 {
 }

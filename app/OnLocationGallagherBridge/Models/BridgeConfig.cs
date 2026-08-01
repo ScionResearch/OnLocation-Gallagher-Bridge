@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 
 namespace OnLocationGallagherBridge.Models;
 
@@ -28,6 +29,7 @@ public class OnLocationConfig
 public class GallagherConfig
 {
     public string? BaseUrl { get; set; } = "";
+    public int Port { get; set; } = 8904;
     public string? ApiKey { get; set; } = "";
     public bool DisableTlsVerification { get; set; } = false;
 }
@@ -46,8 +48,45 @@ public class SmtpConfig
 
 public class WebHostConfig
 {
-    public string? Urls { get; set; } = "http://*:5000";
+    [BindNever]
+    public string? Urls { get; set; } = "https://*:5000";
+
+    public int Port { get; set; } = 5000;
     public string? AdminPasswordHash { get; set; } = "";
+    public HttpsConfig Https { get; set; } = new();
+    public AuthConfig Auth { get; set; } = new();
+}
+
+public class HttpsConfig
+{
+    public bool Enabled { get; set; } = true;
+    public string CertificateSource { get; set; } = "Auto"; // Auto | Thumbprint | Pfx
+    public string? CertificateThumbprint { get; set; }
+    public string? CertificatePath { get; set; }
+    public string? CertificatePassword { get; set; }
+}
+
+public class AuthConfig
+{
+    public bool Enabled { get; set; } = true;
+    public int SessionTimeoutMinutes { get; set; } = 60;
+    public int PasswordMinimumLength { get; set; } = 12;
+    public bool PasswordRequireUppercase { get; set; } = true;
+    public bool PasswordRequireLowercase { get; set; } = true;
+    public bool PasswordRequireDigit { get; set; } = true;
+    public bool PasswordRequireNonAlphanumeric { get; set; } = true;
+
+    [BindNever]
+    public List<WebUser> Users { get; set; } = new();
+}
+
+public class WebUser
+{
+    public string Username { get; set; } = "";
+    public string PasswordHash { get; set; } = "";
+    public bool IsEnabled { get; set; } = true;
+    public bool IsAdmin { get; set; }
+    public bool RequirePasswordChange { get; set; } = true;
 }
 
 public class LoggingConfig

@@ -21,25 +21,34 @@ public class MappingModel : PageModel
     private readonly IGallagherConnector _gallagher;
     private readonly IMemoryCache _cache;
     private readonly IConfigurationStatusService _statusService;
+    private readonly ConfigService _config;
     private readonly ILogger<MappingModel> _logger;
 
-    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache, IConfigurationStatusService statusService, ILogger<MappingModel> logger)
+    public MappingModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IMemoryCache cache, IConfigurationStatusService statusService, ConfigService config, ILogger<MappingModel> logger)
     {
         _db = db;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _cache = cache;
         _statusService = statusService;
+        _config = config;
         _logger = logger;
     }
 
     public override async Task OnPageHandlerExecutionAsync(PageHandlerExecutingContext context, PageHandlerExecutionDelegate next)
     {
-        var status = await _statusService.GetOverallStateAsync(false, context.HttpContext.RequestAborted);
-        if (status.ConnectorSettings != ConfigurationStatus.Complete)
+        // Only gate the main page render; polling and POST handlers must not re-test
+        // connections on every request or the field load gets stuck in a storm of tests.
+        // Only gate the default page render; named handlers (LoadStatus/Load/Save) skip the live test.
+        if (context.HandlerMethod?.HttpMethod == "GET" && string.IsNullOrEmpty(context.HandlerMethod?.Name))
         {
-            context.Result = new RedirectToPageResult("/Setup");
-            return;
+            var config = _config.GetConfig();
+            var connectorStatus = await _statusService.GetConnectorSettingsStatusAsync(config, testConnections: true, context.HttpContext.RequestAborted);
+            if (connectorStatus != ConfigurationStatus.Complete)
+            {
+                context.Result = new RedirectToPageResult("/Settings", new { Message = "Verify both OnLocation and Gallagher connections in Network Settings before configuring field mapping." });
+                return;
+            }
         }
         await next();
     }
@@ -99,7 +108,7 @@ public class MappingModel : PageModel
     public string? Message { get; set; }
     public ConfigurationStatus FieldMappingStatus { get; set; }
 
-    [BindProperty]
+    [BindProperty(SupportsGet = true)]
     public string? LoadRequestId { get; set; }
 
     public bool AutoLoad { get; set; }
@@ -109,6 +118,7 @@ public class MappingModel : PageModel
         await LoadProfilesAsync(ct);
         if (string.IsNullOrWhiteSpace(SelectedProfileId))
             SelectedProfileId = ProfileOptions.FirstOrDefault()?.Value ?? string.Empty;
+        _logger.LogInformation("Mapping GET: profiles={ProfileCount}, selected={SelectedProfileId}, hasProfile={HasProfile}", ProfileOptions.Count, SelectedProfileId, !string.IsNullOrWhiteSpace(SelectedProfileId));
         if (string.IsNullOrWhiteSpace(SelectedProfileId)) return;
 
         await LoadProfilesAsync(ct);
@@ -116,22 +126,34 @@ public class MappingModel : PageModel
         FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
 
         var cacheKey = GetSampleCacheKey();
-        if (!_cache.TryGetValue(cacheKey, out MappingSampleCache? cached) || cached == null)
+        var cacheHit = _cache.TryGetValue(cacheKey, out MappingSampleCache? cached) && cached != null;
+        if (!cacheHit)
         {
             AutoLoad = true;
             LoadRequestId = Guid.NewGuid().ToString("N");
             SetLoadStatus(LoadRequestId, 1, "Requesting OnLocation and Gallagher field data…");
         }
         LoadCachedSamples();
+        _logger.LogInformation("Mapping GET ready: cacheHit={CacheHit}, autoLoad={AutoLoad}, requestId={LoadRequestId}", cacheHit, AutoLoad, LoadRequestId);
     }
 
     public async Task<IActionResult> OnPostLoadAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
+        if (string.IsNullOrWhiteSpace(SelectedProfileId))
+        {
+            _logger.LogWarning("Mapping POST Load selected profile was empty; falling back to first profile.");
+            SelectedProfileId = ProfileOptions.FirstOrDefault()?.Value ?? string.Empty;
+        }
+        _logger.LogInformation("Mapping POST Load: selected={SelectedProfileId}, requestId={LoadRequestId}", SelectedProfileId, LoadRequestId);
+        await LoadProfilesAsync(ct);
         var profile = await LoadProfileAsync();
         FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
-        await LoadSamplesAsync(ct, LoadRequestId);
-        return Page();
+        var requestId = LoadRequestId ?? Guid.NewGuid().ToString("N");
+        await LoadSamplesAsync(ct, requestId);
+        _cache.TryGetValue(GetLoadStatusCacheKey(requestId), out MappingLoadStatus? status);
+        _logger.LogInformation("Mapping POST Load finished: requestId={RequestId}, statusStep={StatusStep}, isSuccess={IsSuccess}", requestId, status?.Step, status?.IsSuccess);
+        return new JsonResult(status);
     }
 
     public IActionResult OnGetLoadStatus(string requestId)

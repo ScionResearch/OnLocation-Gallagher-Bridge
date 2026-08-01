@@ -2,6 +2,9 @@ using System.Data;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.EntityFrameworkCore;
 using OnLocationGallagherBridge.Data;
@@ -36,6 +39,9 @@ Log.Logger = new LoggerConfiguration()
     .WriteTo.File(Path.Combine(logDir, "bridge-.log"), rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30, restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug)
     .CreateLogger();
 
+var configService = new ConfigService();
+await configService.LoadAsync();
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
@@ -49,11 +55,32 @@ builder.Host.UseWindowsService(options =>
 
 builder.Host.UseSerilog();
 
-builder.WebHost.UseUrls("http://*:5000");
+var webHostConfig = configService.GetConfig().WebHost;
+var scheme = webHostConfig.Https.Enabled ? "https" : "http";
+var listenUrl = $"{scheme}://*:{webHostConfig.Port}";
+builder.WebHost.UseUrls(listenUrl);
 
-builder.Services.AddSingleton<ConfigService>();
+builder.WebHost.ConfigureKestrel((context, options) =>
+{
+    if (webHostConfig.Https.Enabled)
+    {
+        var cert = CertificateLoader.Load(webHostConfig.Https, dataDir, configService, Log.Logger);
+        if (cert is not null)
+        {
+            options.ConfigureHttpsDefaults(listenOptions => listenOptions.ServerCertificate = cert);
+        }
+        else
+        {
+            Log.Logger.Error("HTTPS is enabled but no certificate could be loaded. The service may fail to bind to HTTPS endpoints.");
+        }
+    }
+});
+
+builder.Services.AddSingleton(configService);
 builder.Services.AddDbContext<BridgeDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(dataDir, "bridge.db")}"));
+
+builder.Services.AddSingleton<IWebAuthService, WebAuthService>();
 
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient("OnLocation")
@@ -89,6 +116,35 @@ builder.Services.AddScoped<IConfigurationStatusService, ConfigurationStatusServi
 // logging runs, which presents as a blank page.
 builder.Services.Configure<FormOptions>(options => options.ValueCountLimit = 65536);
 
+var authEnabled = webHostConfig.Auth.Enabled;
+if (authEnabled)
+{
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+        .AddCookie(options =>
+        {
+            options.LoginPath = "/Login";
+            options.LogoutPath = "/Logout";
+            options.AccessDeniedPath = "/AccessDenied";
+            options.Cookie.Name = "OnLocationGallagherBridge.Auth";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            options.SlidingExpiration = true;
+            options.ExpireTimeSpan = TimeSpan.FromMinutes(webHostConfig.Auth.SessionTimeoutMinutes);
+        });
+
+    builder.Services.AddAuthorization(options =>
+    {
+        options.FallbackPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
+    });
+}
+
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(dataDir, "keys")))
+    .SetApplicationName("OnLocationGallagherBridge");
+
 builder.Services.AddHealthChecks();
 builder.Services.AddRazorPages();
 
@@ -99,24 +155,47 @@ if (!app.Environment.IsDevelopment())
     app.UseExceptionHandler("/Error");
 }
 
+if (webHostConfig.Https.Enabled)
+{
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
+
 app.UseStaticFiles();
 app.UseRouting();
-app.UseAuthorization();
 
-app.MapHealthChecks("/health");
+if (authEnabled)
+{
+    app.UseAuthentication();
+    app.UseAuthorization();
+
+    app.Use(async (context, next) =>
+    {
+        if (context.User.Identity?.IsAuthenticated == true &&
+            context.User.HasClaim("RequirePasswordChange", "true") &&
+            !context.Request.Path.StartsWithSegments("/ChangePassword") &&
+            !context.Request.Path.StartsWithSegments("/Logout") &&
+            !context.Request.Path.StartsWithSegments("/Error"))
+        {
+            context.Response.Redirect("/ChangePassword");
+            return;
+        }
+        await next();
+    });
+}
+
+app.MapHealthChecks("/health").AllowAnonymous();
 app.MapRazorPages();
 
 using (var scope = app.Services.CreateScope())
 {
     var cfg = scope.ServiceProvider.GetRequiredService<ConfigService>();
-    await cfg.LoadAsync();
-    var urls = cfg.GetConfig().WebHost.Urls;
-    if (!string.IsNullOrWhiteSpace(urls) && !app.Urls.Contains(urls)) app.Urls.Add(urls);
-
+    var webAuth = scope.ServiceProvider.GetRequiredService<IWebAuthService>();
     var db = scope.ServiceProvider.GetRequiredService<BridgeDbContext>();
     await db.Database.EnsureCreatedAsync();
     await EnsureInitialMatchColumnsAsync(db);
     SeedDefaults(db);
+    SeedDefaultAdmin(cfg, webAuth);
 }
 
 app.Run();
@@ -203,6 +282,24 @@ static void SeedDefaults(BridgeDbContext db)
         }
     );
     db.SaveChanges();
+}
+
+static void SeedDefaultAdmin(ConfigService config, IWebAuthService webAuth)
+{
+    var cfg = config.GetConfig();
+    if (!cfg.WebHost.Auth.Enabled || cfg.WebHost.Auth.Users.Any()) return;
+
+    var admin = new WebUser
+    {
+        Username = "admin",
+        IsAdmin = true,
+        IsEnabled = true,
+        RequirePasswordChange = true
+    };
+    webAuth.SetPassword(admin, "admin");
+    cfg.WebHost.Auth.Users.Add(admin);
+    config.SaveAsync().GetAwaiter().GetResult();
+    Log.Logger.Warning("Created default admin user (username: admin, password: admin). You must change this password on first login.");
 }
 
 static SocketsHttpHandler CreateIpv4Handler(Func<bool> isTlsVerificationDisabled)

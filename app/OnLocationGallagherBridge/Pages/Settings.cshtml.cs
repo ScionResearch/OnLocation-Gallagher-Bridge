@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
@@ -17,6 +19,9 @@ public class SettingsModel : PageModel
 
     [BindProperty, Microsoft.AspNetCore.Mvc.ModelBinding.Validation.ValidateNever]
     public BridgeConfig Config { get; set; } = new();
+
+    [BindProperty]
+    public IFormFile? CertificateFile { get; set; }
 
     public string? Message { get; set; }
     public ConfigurationStatus ConnectorStatus { get; set; }
@@ -50,9 +55,47 @@ public class SettingsModel : PageModel
     public async Task<IActionResult> OnPostSaveAsync()
     {
         LogModelStateErrors();
+
+        var current = _config.GetConfig();
+        var users = current.WebHost.Auth.Users;
+        Config.WebHost.Auth.Users = users;
+
+        if (Config.WebHost.Https.CertificateSource == "Pfx" && CertificateFile is { Length: > 0 })
+        {
+            var certDir = Path.Combine(_config.ConfigDirectory, "certs");
+            Directory.CreateDirectory(certDir);
+            var uploadPath = Path.Combine(certDir, "uploaded-cert.pfx");
+            using var stream = new FileStream(uploadPath, FileMode.Create);
+            await CertificateFile.CopyToAsync(stream);
+            Config.WebHost.Https.CertificatePath = uploadPath;
+        }
+
+        // Push the pending settings into memory so the live connectors use them during the test.
+        _config.SetConfig(Config);
+
+        var olOk = await _onLocation.TestConnectionAsync();
+        var olError = olOk ? null : await _onLocation.GetLastErrorAsync();
+
+        var gallOk = await _gallagher.TestConnectionAsync();
+        var gallError = gallOk ? null : await _gallagher.GetLastErrorAsync();
+
+        // Persist the settings even if a test fails.
         await _config.SaveAsync(Config);
-        Message = "Settings saved and encrypted.";
-        ConnectorStatus = await _statusService.GetConnectorSettingsStatusAsync(Config, testConnections: false);
+
+        var parts = new List<string> { "Settings saved." };
+        if (olOk && gallOk)
+        {
+            parts.Add("Both connections verified.");
+            ConnectorStatus = ConfigurationStatus.Complete;
+        }
+        else
+        {
+            if (!olOk) parts.Add($"OnLocation connection failed: {olError}");
+            if (!gallOk) parts.Add($"Gallagher connection failed: {gallError}");
+            ConnectorStatus = ConfigurationStatus.Faulty;
+        }
+
+        Message = string.Join(" ", parts);
         return Page();
     }
 

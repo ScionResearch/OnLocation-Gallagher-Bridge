@@ -46,6 +46,30 @@
                         </li>
                     </ul>
                 </div>
+                <ul class="navbar-nav">
+                    @if (User.Identity?.IsAuthenticated == true)
+                    {
+                        <li class="nav-item dropdown">
+                            <a class="nav-link dropdown-toggle text-dark" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">@User.Identity.Name</a>
+                            <ul class="dropdown-menu dropdown-menu-end">
+                                @if (User.IsInRole("Admin"))
+                                {
+                                    <li><a class="dropdown-item" asp-page="/Users">Users</a></li>
+                                    <li><hr class="dropdown-divider" /></li>
+                                }
+                                <li>
+                                    <form asp-page="/Logout" method="post" class="d-inline">
+                                        <button type="submit" class="dropdown-item">Logout</button>
+                                    </form>
+                                </li>
+                            </ul>
+                        </li>
+                    }
+                    else
+                    {
+                        <li class="nav-item"><a class="nav-link text-dark" asp-page="/Login">Login</a></li>
+                    }
+                </ul>
                 <img src="~/images/icon-200px.png" alt="Bridge icon" class="navbar-brand-icon ms-3 d-none d-sm-block" height="40" />
             </div>
         </nav>

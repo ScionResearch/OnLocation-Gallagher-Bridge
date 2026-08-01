@@ -15,7 +15,7 @@
 
 <partial name="_StatusBanner" model='new StatusBannerModel("Initial Record Match", Model.InitialMatchStatus)' />
 
-<form method="post">
+<form method="post" id="matchReviewForm">
     <div class="mb-3">
         <label class="form-label">Record Group</label>
         <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
@@ -65,7 +65,7 @@
     <button type="submit" class="btn btn-secondary" formaction="/MatchReview?handler=Preview" id="buildPreviewButton">Build initial match review</button>
     <a class="btn @(Model.InitialMatchStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/Index">Go to dashboard</a>
 
-    <div class="card mt-3 shadow-sm d-none" id="previewProgress">
+    <div class="card mt-3 shadow-sm @(Model.AutoLoad ? "" : "d-none")" id="previewProgress" data-autoload="@(Model.AutoLoad.ToString().ToLowerInvariant())" data-request-id="@(Request.Query["previewRequestId"].FirstOrDefault() ?? Model.PreviewRequestId)">
         <div class="card-body">
             <div class="d-flex align-items-center gap-2">
                 <div class="spinner-border spinner-border-sm" role="status" id="previewSpinner"></div>
@@ -178,7 +178,7 @@
             </tr>
         </thead>
         <tbody>
-            @foreach (var i in Enumerable.Range(0, Model.Rows.Count).OrderBy(i => Model.Rows[i].CandidateHref is not null && !Model.Rows[i].RequiresReview ? 2 : string.IsNullOrWhiteSpace(Model.Rows[i].Resolution) ? 0 : 1))
+            @for (int i = 0; i < Model.Rows.Count; i++)
             {
                 <tr class="@(Model.Rows[i].CandidateHref is null ? "table-warning" : Model.Rows[i].RequiresReview ? "table-info" : "")">
                     <td>
@@ -260,7 +260,7 @@
                         <strong>Back up your Gallagher Command Centre configuration before continuing.</strong> Creating new cardholders and linking existing records is not easily undone.
                     </div>
                     <div class="form-check">
-                        <input class="form-check-input" type="checkbox" asp-for="BackupConfirmed" id="backupConfirmed" />
+                        <input class="form-check-input" type="checkbox" id="backupConfirmed" />
                         <label class="form-check-label" for="backupConfirmed">I confirm that Command Centre has been backed up and I want to proceed.</label>
                     </div>
                     <div id="backupError" class="text-danger small mt-2 d-none">You must confirm the backup before proceeding.</div>
@@ -299,7 +299,7 @@
 {
     <script>
         (() => {
-            const form = document.querySelector('form');
+            const form = document.getElementById('matchReviewForm');
             const buildButton = document.getElementById('buildPreviewButton');
             const requestId = document.getElementById('previewRequestId');
             const progress = document.getElementById('previewProgress');
@@ -354,32 +354,34 @@
                 if (isComplete) stopTimers();
             };
 
-            form.addEventListener('submit', event => {
-                if (event.submitter !== buildButton) return;
-                event.preventDefault();
-                requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-                buildButton.disabled = true;
+            buildButton?.addEventListener('click', () => {
                 progress.classList.remove('d-none');
+                spinner.classList.remove('d-none');
+                complete.classList.add('d-none');
                 elapsedStart = Date.now();
                 updateElapsed();
                 elapsedTimer = window.setInterval(updateElapsed, 1000);
+            });
+
+            if (progress.dataset.autoload === 'true') {
+                const autoloadRequestId = progress.dataset.requestId;
                 const pollStatus = async () => {
                     try {
-                        const response = await fetch(`/MatchReview?handler=PreviewStatus&requestId=${encodeURIComponent(requestId.value)}`);
+                        const response = await fetch(`/MatchReview?handler=PreviewStatus&requestId=${encodeURIComponent(autoloadRequestId)}&_=${Date.now()}`, { cache: 'no-cache' });
                         if (response.ok) {
                             const previewStatus = await response.json();
-                            if (previewStatus) setStage(previewStatus);
+                            if (previewStatus) {
+                                setStage(previewStatus);
+                                if (previewStatus.step === 4 && previewStatus.isSuccess !== false) {
+                                    window.location.reload();
+                                }
+                            }
                         }
-                    } catch {
-                    }
+                    } catch { }
                 };
                 pollStatus();
                 pollTimer = window.setInterval(pollStatus, 750);
-                window.setTimeout(() => {
-                    form.action = buildButton.formAction;
-                    form.submit();
-                }, 50);
-            });
+            }
 
             const candidateOptions = document.getElementById('candidateOptions');
             const fillCandidates = select => {
@@ -504,9 +506,14 @@
 
                     const profileId = document.getElementById('SelectedProfileId')?.value ?? '';
                     const token = form.querySelector('input[name="__RequestVerificationToken"]')?.value;
+                    console.log('form contains table:', form.contains(document.querySelector('table')));
+                    console.log('row input sample:', [...document.querySelectorAll('[name^="Rows["]')].slice(0, 3).map(e => e.name));
                     const formData = new FormData(form);
                     formData.set('handler', 'StartApprove');
+                    formData.set('BackupConfirmed', backupConfirmed.checked ? 'true' : 'false');
                     formData.set(approveRequestId.name, requestId);
+                    console.log('StartApprove BackupConfirmed:', formData.get('BackupConfirmed'));
+                    console.log('StartApprove row keys:', [...formData.keys()].filter(k => k.startsWith('Rows[')).length);
 
                     let started = false;
                     try {
@@ -539,7 +546,7 @@
 
                     const pollStatus = async () => {
                         try {
-                            const response = await fetch(`/MatchReview?handler=ApproveStatus&requestId=${encodeURIComponent(requestId)}`);
+                            const response = await fetch(`/MatchReview?handler=ApproveStatus&requestId=${encodeURIComponent(requestId)}&_=${Date.now()}`, { cache: 'no-cache' });
                             if (response.ok) {
                                 const status = await response.json();
                                 if (status) updatePushStatus(status);

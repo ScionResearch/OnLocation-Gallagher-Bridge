@@ -1,11 +1,12 @@
 @page
 @model SettingsModel
 @{
-    ViewData["Title"] = "Connector Settings";
+    ViewData["Title"] = "Network Settings";
 }
 
 <div class="page-header">
-    <h2>Connector Settings</h2>
+    <h2>Network Settings</h2>
+    <p class="text-muted">Configure how the bridge connects to OnLocation, Gallagher, and the local web interface.</p>
 </div>
 
 @if (Model.Message != null)
@@ -13,63 +14,166 @@
     <div class="alert alert-info">@Model.Message</div>
 }
 
-<partial name="_StatusBanner" model='new StatusBannerModel("Connector Settings", Model.ConnectorStatus)' />
+<partial name="_StatusBanner" model='new StatusBannerModel("Network Settings", Model.ConnectorStatus)' />
 
-<form method="post">
-    <h5>OnLocation</h5>
-    <div class="mb-3">
-        <label class="form-label">Base URL</label>
-        <input class="form-control" asp-for="Config.OnLocation.BaseUrl" />
-    </div>
-    <div class="mb-3">
-        <label class="form-label">Auth Mode</label>
-        <select class="form-select" id="OnLocationAuthMode" asp-for="Config.OnLocation.AuthMode">
-            <option value="OAuth2">OAuth2</option>
-            <option value="ApiKey">APIKEY header (API key only)</option>
-            <option value="Basic">Basic (API key + password)</option>
-        </select>
-    </div>
-    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
-        <label class="form-label">OAuth Client Id</label>
-        <input class="form-control" asp-for="Config.OnLocation.ClientId" />
-    </div>
-    <div class="mb-3 auth-field" data-auth-modes="OAuth2">
-        <label class="form-label" for="Config_OnLocation_ClientSecret">OAuth Client Secret</label>
-        <input class="form-control" type="password" id="Config_OnLocation_ClientSecret" name="Config.OnLocation.ClientSecret" value="@Model.Config.OnLocation.ClientSecret" />
-    </div>
-    <div class="mb-3 auth-field" data-auth-modes="ApiKey Basic">
-        <label class="form-label" for="Config_OnLocation_ApiKey">API Key / Basic username</label>
-        <input class="form-control" type="password" id="Config_OnLocation_ApiKey" name="Config.OnLocation.ApiKey" value="@Model.Config.OnLocation.ApiKey" />
-    </div>
-    <div class="mb-3 auth-field" data-auth-modes="Basic">
-        <label class="form-label" for="Config_OnLocation_Password">Password (Basic auth only; leave blank for API Key)</label>
-        <input class="form-control" type="password" id="Config_OnLocation_Password" name="Config.OnLocation.Password" value="@Model.Config.OnLocation.Password" />
+<form method="post" enctype="multipart/form-data">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <button type="submit" class="btn btn-primary" formaction="?handler=Save">Save &amp; test connections</button>
+            <a class="btn @(Model.ConnectorStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/Mapping">Next step</a>
+        </div>
     </div>
 
-    <h5 class="mt-4">Gallagher</h5>
-    <div class="mb-3">
-        <label class="form-label">Base URL (root, e.g. https://gallagher.local)</label>
-        <input class="form-control" asp-for="Config.Gallagher.BaseUrl" />
-    </div>
-    <div class="mb-3">
-        <label class="form-label" for="Config_Gallagher_ApiKey">API Key</label>
-        <input class="form-control" type="password" id="Config_Gallagher_ApiKey" name="Config.Gallagher.ApiKey" value="@Model.Config.Gallagher.ApiKey" />
-    </div>
-    <div class="mb-3 form-check">
-        <input class="form-check-input" type="checkbox" asp-for="Config.Gallagher.DisableTlsVerification" />
-        <label class="form-check-label" asp-for="Config.Gallagher.DisableTlsVerification">Disable TLS verification</label>
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">OnLocation</h5>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">Base URL</label>
+                <input class="form-control" asp-for="Config.OnLocation.BaseUrl" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Auth Mode</label>
+                <select class="form-select" id="OnLocationAuthMode" asp-for="Config.OnLocation.AuthMode">
+                    <option value="OAuth2">OAuth2</option>
+                    <option value="ApiKey">APIKEY header (API key only)</option>
+                    <option value="Basic">Basic (API key + password)</option>
+                </select>
+            </div>
+            <div class="mb-3 auth-field" data-auth-modes="OAuth2">
+                <label class="form-label">OAuth Client Id</label>
+                <input class="form-control" asp-for="Config.OnLocation.ClientId" />
+            </div>
+            <div class="mb-3 auth-field" data-auth-modes="OAuth2">
+                <label class="form-label" for="Config_OnLocation_ClientSecret">OAuth Client Secret</label>
+                <input class="form-control" type="password" id="Config_OnLocation_ClientSecret" name="Config.OnLocation.ClientSecret" value="@Model.Config.OnLocation.ClientSecret" />
+            </div>
+            <div class="mb-3 auth-field" data-auth-modes="ApiKey Basic">
+                <label class="form-label" for="Config_OnLocation_ApiKey">API Key / Basic username</label>
+                <input class="form-control" type="password" id="Config_OnLocation_ApiKey" name="Config.OnLocation.ApiKey" value="@Model.Config.OnLocation.ApiKey" />
+            </div>
+            <div class="mb-3 auth-field" data-auth-modes="Basic">
+                <label class="form-label" for="Config_OnLocation_Password">Password (Basic auth only; leave blank for API Key)</label>
+                <input class="form-control" type="password" id="Config_OnLocation_Password" name="Config.OnLocation.Password" value="@Model.Config.OnLocation.Password" />
+            </div>
+            <div class="text-end">
+                <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestOnLocation">Test OnLocation connection</button>
+            </div>
+        </div>
     </div>
 
-    <h5 class="mt-4">Web Host</h5>
-    <div class="mb-3">
-        <label class="form-label">URLs</label>
-        <input class="form-control" asp-for="Config.WebHost.Urls" />
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Gallagher</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-8">
+                    <label class="form-label">Base URL (e.g. https://gallagher.local)</label>
+                    <input class="form-control" asp-for="Config.Gallagher.BaseUrl" />
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" asp-for="Config.Gallagher.Port"></label>
+                    <input class="form-control" type="number" asp-for="Config.Gallagher.Port" min="1" max="65535" />
+                </div>
+            </div>
+            <div class="mb-3 mt-3">
+                <label class="form-label" for="Config_Gallagher_ApiKey">API Key</label>
+                <input class="form-control" type="password" id="Config_Gallagher_ApiKey" name="Config.Gallagher.ApiKey" value="@Model.Config.Gallagher.ApiKey" />
+            </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.Gallagher.DisableTlsVerification" />
+                <label class="form-check-label" asp-for="Config.Gallagher.DisableTlsVerification">Disable TLS verification</label>
+            </div>
+            <div class="text-end">
+                <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestGallagher">Test Gallagher connection</button>
+            </div>
+        </div>
     </div>
 
-    <button type="submit" class="btn btn-primary" formaction="?handler=Save">Save</button>
-    <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestOnLocation">Test OnLocation</button>
-    <button type="submit" class="btn btn-outline-secondary" formaction="?handler=TestGallagher">Test Gallagher</button>
-    <a class="btn @(Model.ConnectorStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/Mapping">Next step</a>
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Web Host</h5>
+        </div>
+        <div class="card-body">
+            <div class="row g-3 align-items-end">
+                <div class="col-md-4">
+                    <label class="form-label" asp-for="Config.WebHost.Port"></label>
+                    <input class="form-control" type="number" asp-for="Config.WebHost.Port" min="1" max="65535" />
+                    <div class="form-text">A service restart is required after changing the port.</div>
+                </div>
+                <div class="col-md-8 mb-md-0 mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Https.Enabled" />
+                        <label class="form-check-label" asp-for="Config.WebHost.Https.Enabled">Enable HTTPS</label>
+                    </div>
+                </div>
+            </div>
+
+            <h6 class="mt-4">HTTPS</h6>
+            <div class="mb-3">
+                <label class="form-label">Certificate Source</label>
+                <select class="form-select" id="CertificateSource" asp-for="Config.WebHost.Https.CertificateSource">
+                    <option value="Auto">Auto (self-signed, generated on first run)</option>
+                    <option value="Thumbprint">Certificate store thumbprint</option>
+                    <option value="Pfx">PFX file</option>
+                </select>
+            </div>
+            <div class="mb-3 cert-field" data-cert-modes="Thumbprint">
+                <label class="form-label" asp-for="Config.WebHost.Https.CertificateThumbprint"></label>
+                <input class="form-control" asp-for="Config.WebHost.Https.CertificateThumbprint" />
+            </div>
+            <div class="mb-3 cert-field" data-cert-modes="Pfx">
+                <label class="form-label" asp-for="Config.WebHost.Https.CertificatePath"></label>
+                <div class="input-group">
+                    <input class="form-control" asp-for="Config.WebHost.Https.CertificatePath" />
+                    <input type="file" class="form-control" id="CertificateFile" name="CertificateFile" accept=".pfx" />
+                </div>
+                <div class="form-text">Enter a path or choose a PFX file to upload.</div>
+            </div>
+            <div class="mb-3 cert-field" data-cert-modes="Pfx">
+                <label class="form-label" asp-for="Config.WebHost.Https.CertificatePassword"></label>
+                <input class="form-control" type="password" asp-for="Config.WebHost.Https.CertificatePassword" value="@Model.Config.WebHost.Https.CertificatePassword" />
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Authentication</h5>
+        </div>
+        <div class="card-body">
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.Enabled" />
+                <label class="form-check-label" asp-for="Config.WebHost.Auth.Enabled">Require login</label>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" asp-for="Config.WebHost.Auth.SessionTimeoutMinutes"></label>
+                <input class="form-control" type="number" asp-for="Config.WebHost.Auth.SessionTimeoutMinutes" min="1" />
+            </div>
+            <div class="mb-3">
+                <label class="form-label">Minimum Password Length</label>
+                <input class="form-control" type="number" asp-for="Config.WebHost.Auth.PasswordMinimumLength" min="1" />
+            </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireUppercase" />
+                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireUppercase">Require uppercase letter</label>
+            </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireLowercase" />
+                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireLowercase">Require lowercase letter</label>
+            </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireDigit" />
+                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireDigit">Require digit</label>
+            </div>
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireNonAlphanumeric" />
+                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireNonAlphanumeric">Require non-alphanumeric character</label>
+            </div>
+        </div>
+    </div>
 </form>
 
 @section Scripts
@@ -84,5 +188,15 @@
         }
         updateOnLocationFields();
         document.getElementById('OnLocationAuthMode').addEventListener('change', updateOnLocationFields);
+
+        function updateCertificateFields() {
+            const mode = document.getElementById('CertificateSource').value;
+            document.querySelectorAll('.cert-field').forEach(el => {
+                const modes = el.getAttribute('data-cert-modes').split(' ');
+                el.style.display = modes.includes(mode) ? '' : 'none';
+            });
+        }
+        updateCertificateFields();
+        document.getElementById('CertificateSource').addEventListener('change', updateCertificateFields);
     </script>
 }

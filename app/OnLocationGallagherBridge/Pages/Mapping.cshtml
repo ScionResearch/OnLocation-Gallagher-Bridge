@@ -23,13 +23,18 @@
     @Html.AntiForgeryToken()
     <div class="mb-3">
         <label class="form-label">Record Group</label>
-        <select class="form-select" asp-for="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
+        <select class="form-select" name="SelectedProfileId" id="SelectedProfileId" asp-items="Model.ProfileOptions">
+            @foreach (var option in Model.ProfileOptions)
+            {
+                <!option value="@option.Value" selected="@option.Selected">@option.Text</!option>
+            }
+        </select>
     </div>
-    <input type="hidden" asp-for="LoadRequestId" id="loadRequestId" />
+    <input type="hidden" asp-for="LoadRequestId" id="loadRequestId" value="@Model.LoadRequestId" />
     <button type="submit" class="btn btn-secondary" formaction="/Mapping?handler=Load" id="loadFieldsButton" @(Model.AutoLoad ? "disabled" : "")>Refresh Remote Fields</button>
     <button type="submit" class="btn btn-primary" formaction="/Mapping?handler=Save" id="saveMappingButton" @(Model.AutoLoad ? "disabled" : "")>Save mapping</button>
     <a class="btn @(Model.FieldMappingStatus == ConfigurationStatus.Complete ? "btn-primary" : "btn-outline-secondary disabled")" asp-page="/MatchReview">Next step</a>
-    <div id="loadFieldsProgress" class="card border-primary shadow-sm mt-3 @(Model.AutoLoad ? "" : "d-none")" role="status" aria-live="polite">
+    <div id="loadFieldsProgress" class="card border-primary shadow-sm mt-3 @(Model.AutoLoad ? "" : "d-none")" data-autoload="@(Model.AutoLoad.ToString().ToLowerInvariant())" role="status" aria-live="polite">
         <div class="card-body py-3">
             <div class="d-flex align-items-center gap-2 mb-2">
                 <div id="loadFieldsSpinner" class="spinner-border spinner-border-sm text-primary" aria-hidden="true"></div>
@@ -611,11 +616,14 @@
             formData.set('LoadRequestId', requestId.value);
             const timer = window.setInterval(pollStatus, 750);
             pollStatus();
-            let loadOk = false;
             try {
                 const response = await fetch('/Mapping?handler=Load', { method: 'POST', body: formData, headers: token ? { 'RequestVerificationToken': token } : {} });
                 if (!response.ok) throw new Error(`Server returned ${response.status}`);
-                loadOk = true;
+                const final = await response.json();
+                if (final) setStage(final);
+                if (final && final.isSuccess !== false) {
+                    window.location.reload();
+                }
             } catch (err) {
                 spinner.classList.add('d-none');
                 complete.classList.remove('d-none');
@@ -627,18 +635,10 @@
             } finally {
                 window.clearInterval(timer);
             }
-            if (!loadOk) return;
-            const finalResponse = await fetch(`/Mapping?handler=LoadStatus&requestId=${encodeURIComponent(requestId.value)}`);
-            if (finalResponse.ok) {
-                const final = await finalResponse.json();
-                if (final) setStage(final);
-                if (final && final.isSuccess !== false) {
-                    window.location.reload();
-                }
-            }
         };
 
-        if (requestId.value) {
+        if (progress.dataset.autoload === 'true') {
+            if (!requestId.value) requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
             startRemoteLoad();
         }
 
