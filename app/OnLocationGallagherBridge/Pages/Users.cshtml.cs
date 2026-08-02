@@ -26,6 +26,9 @@ public class UsersModel : PageModel
     [BindProperty]
     public bool NewIsAdmin { get; set; }
 
+    [BindProperty]
+    public AuthConfig Auth { get; set; } = new();
+
     public UsersModel(IWebAuthService auth, ConfigService config)
     {
         _auth = auth;
@@ -35,6 +38,17 @@ public class UsersModel : PageModel
     public void OnGet()
     {
         Users = _auth.GetUsers();
+        Auth = _config.GetConfig().WebHost.Auth;
+    }
+
+    public async Task<IActionResult> OnPostSaveAuthAsync()
+    {
+        var cfg = _config.GetConfig();
+        Auth.Users = cfg.WebHost.Auth.Users;
+        cfg.WebHost.Auth = Auth;
+        await _config.SaveAsync(cfg);
+        Message = "Authentication settings saved.";
+        return RedirectToPage(new { Message });
     }
 
     public async Task<IActionResult> OnPostAddAsync()

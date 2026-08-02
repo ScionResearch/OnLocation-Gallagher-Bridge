@@ -40,6 +40,7 @@ public class GallagherConnector : IGallagherConnector
     private string? _lastError;
     private JsonElement? _apiRoot;
     private bool? _lastConnectionResult;
+    private bool? _lastNotifiedResult;
     private readonly object _connectionLock = new();
 
     public bool? LastConnectionResult
@@ -109,14 +110,12 @@ public class GallagherConnector : IGallagherConnector
 
     private void UpdateConnectionState(bool ok, bool raiseNotifications)
     {
-        bool? previous;
         lock (_connectionLock)
         {
-            previous = _lastConnectionResult;
             _lastConnectionResult = ok;
             if (!raiseNotifications) return;
-            if (previous is null) return;
-            if (previous == ok) return;
+            if (_lastNotifiedResult == ok) return;
+            _lastNotifiedResult = ok;
         }
         try
         {

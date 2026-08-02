@@ -20,8 +20,9 @@ public class IndexModel : PageModel
     private readonly IConfigurationStatusService _statusService;
     private readonly IOnLocationSourceService _source;
     private readonly IJobProcessor _processor;
+    private readonly ILogger<IndexModel> _logger;
 
-    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit, ISyncActivity activity, IConfigurationStatusService statusService, IOnLocationSourceService source, IJobProcessor processor)
+    public IndexModel(BridgeDbContext db, IOnLocationConnector onLocation, IGallagherConnector gallagher, IAuditService audit, ISyncActivity activity, IConfigurationStatusService statusService, IOnLocationSourceService source, IJobProcessor processor, ILogger<IndexModel> logger)
     {
         _db = db;
         _onLocation = onLocation;
@@ -31,6 +32,7 @@ public class IndexModel : PageModel
         _statusService = statusService;
         _source = source;
         _processor = processor;
+        _logger = logger;
     }
 
     public List<SyncProfile> Profiles { get; set; } = new();
@@ -138,7 +140,7 @@ public class IndexModel : PageModel
         });
     }
 
-    public async Task<IActionResult> OnPostScheduleAsync(string profileId, int fastMinutes, int fullDays, string fullTime, int fullMonths, CancellationToken ct)
+    public async Task<IActionResult> OnPostScheduleAsync(string profileId, int fastMinutes, int fastRecordCount, int fullDays, string fullTime, int fullMonths, CancellationToken ct)
     {
         var profile = await _db.SyncProfiles.FindAsync(new object?[] { profileId }, cancellationToken: ct);
         if (profile == null)
@@ -150,6 +152,12 @@ public class IndexModel : PageModel
         if (fastMinutes < 1 || fastMinutes > 60)
         {
             TempData["Message"] = "The fast sync interval must be between 1 and 60 minutes.";
+            return RedirectToPage();
+        }
+
+        if (fastRecordCount < 1 || fastRecordCount > 200)
+        {
+            TempData["Message"] = "The fast sync record count must be between 1 and 200.";
             return RedirectToPage();
         }
 
@@ -172,6 +180,7 @@ public class IndexModel : PageModel
         }
 
         profile.FastSyncIntervalMinutes = fastMinutes;
+        profile.FastSyncRecordCount = fastRecordCount;
         profile.FullSyncIntervalDays = fullDays;
         profile.FullSyncTimeOfDayMinutes = (int)fullTimeOfDay.TotalMinutes;
         profile.FullSyncLookbackMonths = fullMonths == 0 ? null : fullMonths;
@@ -181,7 +190,7 @@ public class IndexModel : PageModel
         await _db.SaveChangesAsync(ct);
 
         var lookbackText = fullMonths == 0 ? "all existing records" : $"{fullMonths} month(s)";
-        TempData["Message"] = $"'{profileId}' now fast-syncs {DescribeInterval(fastMinutes).ToLowerInvariant()} and full-syncs {DescribeFullInterval(fullDays).ToLowerInvariant()} at {fullTime} looking back {lookbackText}.";
+        TempData["Message"] = $"'{profileId}' now fast-syncs {DescribeInterval(fastMinutes).ToLowerInvariant()} retrieving {fastRecordCount} record(s) and full-syncs {DescribeFullInterval(fullDays).ToLowerInvariant()} at {fullTime} looking back {lookbackText}.";
         return RedirectToPage();
     }
 
@@ -241,72 +250,10 @@ public class IndexModel : PageModel
             return RedirectToPage();
         }
 
-        var correlation = Guid.NewGuid().ToString("N");
-        var bookmark = await _db.SyncBookmarks.FindAsync(new object?[] { profile.Id }, cancellationToken: ct);
-        var isNewBookmark = bookmark == null;
-        bookmark ??= new SyncBookmark { ProfileId = profile.Id };
-
         Log.Information("Starting manual {SyncType} sync for profile {Profile} ({EntityType})", fullSync ? "full" : "fast", profile.Id, profile.EntityType);
-        _activity.Begin(profile.Id, $"Manual {(fullSync ? "full" : "fast")} sync starting");
-
-        IReadOnlyList<JsonElement> records;
-        try
-        {
-            records = await _source.GetRecordsAsync(profile, bookmark, fullSync, ct);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "Manual {SyncType} sync fetch failed for profile {Profile}", fullSync ? "full" : "fast", profile.Id);
-            _activity.Complete($"{profile.Id}: manual sync fetch failed \u2014 {ex.Message}");
-            TempData["Message"] = $"Fetch failed: {ex.Message}";
-            return RedirectToPage();
-        }
-
-        Log.Information("Fetched {Count} records for profile {Profile}", records.Count, profile.Id);
-
-        int created = 0;
-        foreach (var record in records)
-        {
-            var id = GetId(record);
-            if (string.IsNullOrEmpty(id)) continue;
-            var job = new SyncJob
-            {
-                ProfileId = profile.Id,
-                SourceType = profile.EntityType,
-                SourceId = id,
-                PayloadJson = record.ToString() ?? "{}",
-                Status = "Pending",
-                CorrelationId = correlation
-            };
-            _db.SyncJobs.Add(job);
-            created++;
-        }
-        await _db.SaveChangesAsync(ct);
-
-        var pending = await _db.SyncJobs.Where(j => j.ProfileId == profile.Id && (j.Status == "Pending" || j.Status == "ManualReview")).ToListAsync(ct);
-        var processed = 0;
-        foreach (var job in pending)
-        {
-            job.Status = "Running";
-            await _db.SaveChangesAsync(ct);
-            _activity.SetProgress(processed, pending.Count, $"Writing {job.SourceId} to Command Centre");
-            await _processor.ProcessAsync(job, correlation, ct);
-            processed++;
-            _activity.SetProgress(processed, pending.Count);
-        }
-
-        if (isNewBookmark)
-            _db.SyncBookmarks.Add(bookmark);
-        else
-            _db.SyncBookmarks.Update(bookmark);
-        await _db.SaveChangesAsync(ct);
-
-        var message = records.Count == 0
-            ? "No records returned from OnLocation. The endpoint responded but the list was empty."
-            : $"Fetched {records.Count} records; created {created} sync jobs.";
-        Log.Information("Manual {SyncType} sync completed for profile {Profile}: {Message}", fullSync ? "full" : "fast", profile.Id, message);
-        _activity.Complete($"{profile.Id}: manual {(fullSync ? "full" : "fast")} sync checked {_activity.Snapshot.RecordsChecked} induction record(s), wrote {processed} cardholder update(s)");
-        TempData["Message"] = message;
+        var summary = await SyncProfileRunner.RunAsync(_db, _source, _processor, _audit, _activity, _logger, profile, fullSync, ct);
+        Log.Information("Manual {SyncType} sync completed for profile {Profile}: {Message}", fullSync ? "full" : "fast", profile.Id, summary.Message);
+        TempData["Message"] = summary.Message;
         return RedirectToPage();
     }
 

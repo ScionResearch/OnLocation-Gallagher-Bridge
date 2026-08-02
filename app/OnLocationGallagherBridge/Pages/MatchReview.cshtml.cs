@@ -613,23 +613,24 @@ public class MatchReviewModel : PageModel
         if (!backupConfirmed)
             return new JsonResult(new { success = false, message = "You must confirm that Command Centre has been backed up before applying the initial match." });
 
+        var rows = Rows ?? new List<MatchRow>();
         Serilog.Log.Information("StartApprove: Rows.Count={Count}, emptyResolutions={Empty}, firstResolutionFormValue={First}",
-            Rows?.Count ?? 0,
-            Rows?.Count(r => string.IsNullOrWhiteSpace(r.Resolution)) ?? 0,
+            rows.Count,
+            rows.Count(r => string.IsNullOrWhiteSpace(r.Resolution)),
             Request.Form["Rows[0].Resolution"].FirstOrDefault());
 
-        if (Rows.Count == 0 || Rows.Any(r => string.IsNullOrWhiteSpace(r.Resolution)))
+        if (rows.Count == 0 || rows.Any(r => string.IsNullOrWhiteSpace(r.Resolution)))
             return new JsonResult(new { success = false, message = "Resolve every record as Match, Create, or Exclude before confirming the initial match." });
 
-        if (Rows.Where(r => r.Resolution == "Match").GroupBy(r => r.CandidateHref).Any(g => string.IsNullOrWhiteSpace(g.Key) || g.Count() > 1))
+        if (rows.Where(r => r.Resolution == "Match").GroupBy(r => r.CandidateHref).Any(g => string.IsNullOrWhiteSpace(g.Key) || g.Count() > 1))
             return new JsonResult(new { success = false, message = "Each matched Gallagher cardholder can only be assigned to one OnLocation record." });
 
-        if (Rows.Any(r => r.Resolution == "Create") && string.IsNullOrWhiteSpace(profile.DefaultDivisionHref))
+        if (rows.Any(r => r.Resolution == "Create") && string.IsNullOrWhiteSpace(profile.DefaultDivisionHref))
             return new JsonResult(new { success = false, message = "Gallagher requires a division for every new cardholder. Choose a default division in the Defaults section of the Field Mapping page before creating cardholders." });
 
         var requestId = string.IsNullOrWhiteSpace(ApproveRequestId) ? Guid.NewGuid().ToString("N") : ApproveRequestId;
         var profileId = SelectedProfileId;
-        var rowsSnapshot = Rows.ToList();
+        var rowsSnapshot = rows.ToList();
         var cacheKey = GetApproveStatusCacheKey(requestId);
         _cache.Set(cacheKey, new MatchPushStatus { Total = rowsSnapshot.Count, Message = "Preparing to push changes to Gallagher..." }, TimeSpan.FromMinutes(30));
 

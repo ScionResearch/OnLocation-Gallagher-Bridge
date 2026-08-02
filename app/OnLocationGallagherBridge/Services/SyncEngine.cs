@@ -87,10 +87,11 @@ public class SyncEngine : BackgroundService
 
         _logger.LogInformation("Sync engine found {Due} due profile(s): {Profiles}", profiles.Count, string.Join(", ", profiles.Select(p => p.Id)));
 
+        var audit = scope.ServiceProvider.GetRequiredService<IAuditService>();
         foreach (var profile in profiles)
         {
             var fullSync = IsFullSyncDue(profile, now);
-            await RunProfileAsync(db, source, processor, profile, fullSync, ct);
+            await SyncProfileRunner.RunAsync(db, source, processor, audit, _activity, _logger, profile, fullSync, ct);
             profile.LastRun = now;
             profile.NextRun = now.AddMinutes(Math.Max(1, profile.FastSyncIntervalMinutes));
             if (fullSync)
@@ -135,106 +136,5 @@ public class SyncEngine : BackgroundService
 
         while (candidate <= minimum) candidate = candidate.AddDays(intervalDays);
         return new DateTimeOffset(candidate, local.Offset);
-    }
-
-    private async Task RunProfileAsync(BridgeDbContext db, IOnLocationSourceService source, IJobProcessor processor, SyncProfile profile, bool fullSync, CancellationToken ct)
-    {
-        if (!profile.InitialMatchCompleted)
-        {
-            _logger.LogInformation("Profile {Profile} is blocked pending initial record match", profile.Id);
-            return;
-        }
-
-        var mode = fullSync ? "full" : "fast";
-        var correlation = Guid.NewGuid().ToString("N");
-        _logger.LogInformation("Running profile {Profile} ({Mode} sync) with correlation {Correlation}", profile.Id, mode, correlation);
-        _activity.Begin(profile.Id, $"Starting ({mode} sync)");
-
-        var bookmark = await db.SyncBookmarks.FindAsync(new object?[] { profile.Id }, cancellationToken: ct);
-        var newBookmark = bookmark == null;
-        bookmark ??= new SyncBookmark { ProfileId = profile.Id };
-
-        IReadOnlyList<JsonElement> records;
-        try
-        {
-            records = await source.GetRecordsAsync(profile, bookmark, fullSync, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Profile {Profile} fetch failed", profile.Id);
-            _activity.Complete($"{profile.Id}: fetch failed \u2014 {ex.Message}");
-            return;
-        }
-
-        _activity.SetPhase("Queueing", $"{records.Count} record(s) to write to Command Centre");
-        foreach (var record in records)
-        {
-            var id = GetId(record);
-            if (string.IsNullOrEmpty(id)) continue;
-
-            var payload = record.ToString() ?? "{}";
-            var existing = await db.SyncJobs.FirstOrDefaultAsync(j => j.ProfileId == profile.Id && j.SourceId == id && j.Status == "Pending", ct);
-            if (existing != null)
-            {
-                existing.PayloadJson = payload;
-                existing.UpdatedAt = DateTimeOffset.UtcNow;
-            }
-            else
-            {
-                var completedJobs = await db.SyncJobs
-                    .Where(j => j.ProfileId == profile.Id && j.SourceId == id && j.Status == "Complete")
-                    .ToListAsync(ct);
-                var latestCompleted = completedJobs.OrderByDescending(j => j.UpdatedAt).FirstOrDefault();
-                if (latestCompleted != null && latestCompleted.PayloadJson == payload) continue;
-
-                db.SyncJobs.Add(new SyncJob
-                {
-                    ProfileId = profile.Id,
-                    SourceType = profile.EntityType,
-                    SourceId = id,
-                    PayloadJson = payload,
-                    Status = "Pending",
-                    CorrelationId = correlation
-                });
-            }
-        }
-        await db.SaveChangesAsync(ct);
-
-        var pending = await db.SyncJobs.Where(j => j.ProfileId == profile.Id && j.Status == "Pending").ToListAsync(ct);
-        var processed = 0;
-        foreach (var job in pending)
-        {
-            job.Status = "Running";
-            job.UpdatedAt = DateTimeOffset.UtcNow;
-            await db.SaveChangesAsync(ct);
-            _activity.SetProgress(processed, pending.Count, $"Writing {job.SourceId} to Command Centre");
-            await processor.ProcessAsync(job, correlation, ct);
-            processed++;
-            _activity.SetProgress(processed, pending.Count);
-        }
-
-        if (newBookmark)
-            db.SyncBookmarks.Add(bookmark);
-        else
-            db.SyncBookmarks.Update(bookmark);
-        await db.SaveChangesAsync(ct);
-
-        var snapshot = _activity.Snapshot;
-        _activity.Complete($"{profile.Id}: checked {snapshot.RecordsChecked} induction record(s), wrote {processed} cardholder update(s)");
-    }
-
-    private async Task<IReadOnlyList<JsonElement>> FetchInductionHoldersAsync(IOnLocationConnector onLocation, SyncProfile profile, SyncBookmark bookmark, CancellationToken ct)
-    {
-        var parts = profile.OnLocationEndpoint.Split('/').LastOrDefault()?.Split('?').FirstOrDefault();
-        if (string.IsNullOrEmpty(parts) || !int.TryParse(parts, out var inductionId)) parts = "1";
-        // Use the endpoint segment as induction id
-        var id = profile.OnLocationEndpoint.Trim('/').Split('/').LastOrDefault() ?? "1";
-        return await onLocation.GetInductionHoldersAsync(id, bookmark, ct);
-    }
-
-    private static string? GetId(JsonElement record)
-    {
-        if (record.TryGetProperty("id", out var id)) return id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
-        return null;
     }
 }

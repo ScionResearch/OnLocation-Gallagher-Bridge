@@ -16,6 +16,57 @@
 
 <div class="card shadow-sm mb-4">
     <div class="card-body">
+        <h5 class="card-title">Authentication Settings</h5>
+        <form method="post" asp-page-handler="SaveAuth">
+            <div class="mb-3 form-check">
+                <input class="form-check-input" type="checkbox" asp-for="Auth.Enabled" />
+                <label class="form-check-label" asp-for="Auth.Enabled">Require login</label>
+            </div>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" asp-for="Auth.SessionTimeoutMinutes"></label>
+                    <input class="form-control" type="number" asp-for="Auth.SessionTimeoutMinutes" min="1" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Minimum Password Length</label>
+                    <input class="form-control" type="number" asp-for="Auth.PasswordMinimumLength" min="1" />
+                </div>
+            </div>
+            <div class="row mt-3">
+                <div class="col-md-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="Auth.PasswordRequireUppercase" />
+                        <label class="form-check-label" asp-for="Auth.PasswordRequireUppercase">Require uppercase</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="Auth.PasswordRequireLowercase" />
+                        <label class="form-check-label" asp-for="Auth.PasswordRequireLowercase">Require lowercase</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="Auth.PasswordRequireDigit" />
+                        <label class="form-check-label" asp-for="Auth.PasswordRequireDigit">Require digit</label>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" asp-for="Auth.PasswordRequireNonAlphanumeric" />
+                        <label class="form-check-label" asp-for="Auth.PasswordRequireNonAlphanumeric">Require non-alphanumeric</label>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary">Save Authentication Settings</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
         <h5 class="card-title">Add User</h5>
         <form method="post" asp-page-handler="Add">
             <div class="row g-3 align-items-end">

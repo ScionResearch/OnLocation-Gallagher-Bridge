@@ -48,11 +48,19 @@ public class ConfigService
             return;
         }
 
-        var encrypted = await File.ReadAllBytesAsync(_configFile);
-        var json = Unprotect(encrypted);
-        var cfg = JsonSerializer.Deserialize(json, typeof(BridgeConfig), SourceGenerationContext.Default) as BridgeConfig ?? new BridgeConfig();
-        MigrateLegacyConfig(cfg);
-        lock (_lock) { _config = cfg; }
+        try
+        {
+            var encrypted = await File.ReadAllBytesAsync(_configFile);
+            var json = Unprotect(encrypted);
+            var cfg = JsonSerializer.Deserialize(json, typeof(BridgeConfig), SourceGenerationContext.Default) as BridgeConfig ?? new BridgeConfig();
+            MigrateLegacyConfig(cfg);
+            lock (_lock) { _config = cfg; }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Error(ex, "Failed to load config from {ConfigFile}; using defaults. The file may be corrupt or the service account may lack permission.", _configFile);
+            lock (_lock) { _config = new BridgeConfig(); }
+        }
     }
 
     public async Task SaveAsync(BridgeConfig? config = null)
@@ -62,7 +70,42 @@ public class ConfigService
         var encrypted = Protect(Encoding.UTF8.GetBytes(json));
 
         Directory.CreateDirectory(_configDir);
-        await File.WriteAllBytesAsync(_configFile, encrypted);
+        var tempFile = $"{_configFile}.tmp";
+        var backupFile = $"{_configFile}.bak";
+
+        try
+        {
+            await File.WriteAllBytesAsync(tempFile, encrypted);
+            if (File.Exists(_configFile))
+            {
+                try
+                {
+                    File.Replace(tempFile, _configFile, backupFile);
+                }
+                catch (IOException)
+                {
+                    // Older Windows versions or locked files may not support Replace; fall back to rename.
+                    File.Delete(_configFile);
+                    File.Move(tempFile, _configFile);
+                }
+            }
+            else
+            {
+                File.Move(tempFile, _configFile);
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempFile)) File.Delete(tempFile);
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
+        }
+
         lock (_lock) { _config = config; }
     }
 

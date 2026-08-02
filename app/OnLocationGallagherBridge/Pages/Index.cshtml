@@ -87,26 +87,32 @@
                                         Next fast run @(p.Enabled ? (p.NextRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")<br />
                                         Next full run @(p.Enabled ? (p.NextFullRun?.ToLocalTime().ToString("g") ?? "on the next tick") : "paused")
                                     </small>
-                                    <form method="post" asp-page-handler="Schedule" class="d-flex flex-wrap gap-2 align-items-center schedule-form">
+                                    <form method="post" asp-page-handler="Schedule" class="d-flex flex-column gap-2 schedule-form">
                                         <input type="hidden" name="profileId" value="@p.Id" />
-                                        <label class="form-label mb-0 small text-nowrap">Fast</label>
-                                        <select name="fastMinutes" class="form-select form-select-sm" style="width: 7rem;">
-                                            @foreach (var option in IndexModel.IntervalOptions)
-                                            {
-                                                <option value="@option.Minutes" selected="@(option.Minutes == p.FastSyncIntervalMinutes)">@option.Label</option>
-                                            }
-                                        </select>
-                                        <label class="form-label mb-0 small text-nowrap">Full</label>
-                                        <select name="fullDays" class="form-select form-select-sm" style="width: 7rem;">
-                                            @foreach (var option in IndexModel.FullIntervalOptions)
-                                            {
-                                                <option value="@option.Days" selected="@(option.Days == p.FullSyncIntervalDays)">@option.Label</option>
-                                            }
-                                        </select>
-                                        <input type="time" name="fullTime" value="@TimeSpan.FromMinutes(p.FullSyncTimeOfDayMinutes).ToString("hh\\:mm")" class="form-control form-control-sm" style="width: 6rem;" />
-                                        <input type="number" name="fullMonths" min="0" max="120" value="@(p.FullSyncLookbackMonths ?? 0)" class="form-control form-control-sm" style="width: 4rem;" title="Lookback months (0 = all records)" />
-                                        <span class="small text-nowrap">mo</span>
-                                        <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Apply</button>
+                                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                                            <label class="form-label mb-0 small text-nowrap">Fast interval</label>
+                                            <select name="fastMinutes" class="form-select form-select-sm" style="width: 7rem;">
+                                                @foreach (var option in IndexModel.IntervalOptions)
+                                                {
+                                                    <option value="@option.Minutes" selected="@(option.Minutes == p.FastSyncIntervalMinutes)">@option.Label</option>
+                                                }
+                                            </select>
+                                            <label class="form-label mb-0 small text-nowrap">Records</label>
+                                            <input type="number" name="fastRecordCount" min="1" max="200" value="@p.FastSyncRecordCount" class="form-control form-control-sm" style="width: 4rem;" title="Records to retrieve per induction (1-200)" />
+                                        </div>
+                                        <div class="d-flex flex-wrap gap-2 align-items-center">
+                                            <label class="form-label mb-0 small text-nowrap">Full interval</label>
+                                            <select name="fullDays" class="form-select form-select-sm" style="width: 7rem;">
+                                                @foreach (var option in IndexModel.FullIntervalOptions)
+                                                {
+                                                    <option value="@option.Days" selected="@(option.Days == p.FullSyncIntervalDays)">@option.Label</option>
+                                                }
+                                            </select>
+                                            <input type="time" name="fullTime" value="@TimeSpan.FromMinutes(p.FullSyncTimeOfDayMinutes).ToString("hh\\:mm")" class="form-control form-control-sm" style="width: 6rem;" />
+                                            <input type="number" name="fullMonths" min="0" max="120" value="@(p.FullSyncLookbackMonths ?? 0)" class="form-control form-control-sm" style="width: 4rem;" title="Lookback months (0 = all records)" />
+                                            <span class="small text-nowrap">mo</span>
+                                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">Apply</button>
+                                        </div>
                                     </form>
                                 </div>
                                 @if (configured)
@@ -268,7 +274,7 @@
             }
 
             poll();
-            setInterval(poll, 2000);
+            setInterval(poll, 1000);
 
             // Disable schedule Apply buttons until a value changes.
             document.querySelectorAll('form.schedule-form').forEach(function (form) {

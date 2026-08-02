@@ -57,8 +57,7 @@ public class SettingsModel : PageModel
         LogModelStateErrors();
 
         var current = _config.GetConfig();
-        var users = current.WebHost.Auth.Users;
-        Config.WebHost.Auth.Users = users;
+        Config.WebHost.Auth = current.WebHost.Auth;
 
         if (Config.WebHost.Https.CertificateSource == "Pfx" && CertificateFile is { Length: > 0 })
         {

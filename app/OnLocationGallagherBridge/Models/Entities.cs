@@ -22,6 +22,7 @@ public class SyncProfile
     public int SyncWindowDays { get; set; } = 7;
     // Fast sync only inspects the newest holder records and is meant for recently completed inductions.
     public int FastSyncIntervalMinutes { get; set; } = 5;
+    public int FastSyncRecordCount { get; set; } = 10;
     // Full sync re-scans a configurable date window to catch old induction invites that were completed late.
     public int FullSyncIntervalDays { get; set; } = 1;
     // Minutes since midnight (0 - 1439) at which the full sync should run.

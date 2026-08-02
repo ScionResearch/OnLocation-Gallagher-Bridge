@@ -220,6 +220,7 @@ static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncIntervalDays", "INTEGER NOT NULL DEFAULT 1");
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncTimeOfDayMinutes", "INTEGER NOT NULL DEFAULT 60");
     await EnsureColumnAsync(db, "SyncProfiles", "FullSyncLookbackMonths", "INTEGER NULL");
+    await EnsureColumnAsync(db, "SyncProfiles", "FastSyncRecordCount", "INTEGER NOT NULL DEFAULT 10");
     await EnsureColumnAsync(db, "SyncProfiles", "LastRun", "TEXT NULL");
     await EnsureColumnAsync(db, "SyncProfiles", "LastFullRun", "TEXT NULL");
     await EnsureColumnAsync(db, "SyncProfiles", "NextFullRun", "TEXT NULL");

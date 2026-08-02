@@ -139,41 +139,6 @@
         </div>
     </div>
 
-    <div class="card mb-4 shadow-sm">
-        <div class="card-header">
-            <h5 class="mb-0">Authentication</h5>
-        </div>
-        <div class="card-body">
-            <div class="mb-3 form-check">
-                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.Enabled" />
-                <label class="form-check-label" asp-for="Config.WebHost.Auth.Enabled">Require login</label>
-            </div>
-            <div class="mb-3">
-                <label class="form-label" asp-for="Config.WebHost.Auth.SessionTimeoutMinutes"></label>
-                <input class="form-control" type="number" asp-for="Config.WebHost.Auth.SessionTimeoutMinutes" min="1" />
-            </div>
-            <div class="mb-3">
-                <label class="form-label">Minimum Password Length</label>
-                <input class="form-control" type="number" asp-for="Config.WebHost.Auth.PasswordMinimumLength" min="1" />
-            </div>
-            <div class="mb-3 form-check">
-                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireUppercase" />
-                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireUppercase">Require uppercase letter</label>
-            </div>
-            <div class="mb-3 form-check">
-                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireLowercase" />
-                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireLowercase">Require lowercase letter</label>
-            </div>
-            <div class="mb-3 form-check">
-                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireDigit" />
-                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireDigit">Require digit</label>
-            </div>
-            <div class="mb-3 form-check">
-                <input class="form-check-input" type="checkbox" asp-for="Config.WebHost.Auth.PasswordRequireNonAlphanumeric" />
-                <label class="form-check-label" asp-for="Config.WebHost.Auth.PasswordRequireNonAlphanumeric">Require non-alphanumeric character</label>
-            </div>
-        </div>
-    </div>
 </form>
 
 @section Scripts

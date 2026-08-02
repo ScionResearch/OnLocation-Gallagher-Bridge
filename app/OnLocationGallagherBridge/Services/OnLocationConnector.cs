@@ -51,6 +51,7 @@ public class OnLocationConnector : IOnLocationConnector
     private readonly INotificationService _notifications;
     private string? _lastError;
     private bool? _lastConnectionResult;
+    private bool? _lastNotifiedResult;
     private readonly object _connectionLock = new();
 
     public bool? LastConnectionResult
@@ -109,14 +110,12 @@ public class OnLocationConnector : IOnLocationConnector
 
     private void UpdateConnectionState(bool ok, bool raiseNotifications)
     {
-        bool? previous;
         lock (_connectionLock)
         {
-            previous = _lastConnectionResult;
             _lastConnectionResult = ok;
             if (!raiseNotifications) return;
-            if (previous is null) return;
-            if (previous == ok) return;
+            if (_lastNotifiedResult == ok) return;
+            _lastNotifiedResult = ok;
         }
         try
         {

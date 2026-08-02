@@ -31,12 +31,14 @@ public class OnLocationSourceService : IOnLocationSourceService
         if (inductionIds.Count == 0)
         {
             // No induction drives this profile, so the people list itself is walked a page at a time.
-            return profile.EntityType switch
+            var all = profile.EntityType switch
             {
                 "Staff" => await _onLocation.GetStaffAsync(bookmark, ct),
                 "SpMember" => await _onLocation.GetContractorMembersAsync(bookmark, ct),
                 _ => Array.Empty<JsonElement>()
             };
+            _activity.AddChecked(all.Count, $"{all.Count} record(s) to write to Command Centre");
+            return all;
         }
 
         var personIdField = GetPersonIdField(profile);
@@ -70,16 +72,17 @@ public class OnLocationSourceService : IOnLocationSourceService
         }
         else
         {
-            _logger.Information("Profile {Profile}: fast sync checking the latest 10 holder records for each of {Count} induction(s)",
-                profile.Id, inductionIds.Count);
+            var fastSyncRecordCount = Math.Clamp(profile.FastSyncRecordCount, 1, 200);
+            _logger.Information("Profile {Profile}: fast sync checking the latest {RecordCount} holder records for each of {Count} induction(s)",
+                profile.Id, fastSyncRecordCount, inductionIds.Count);
 
             var index = 0;
             foreach (var inductionId in inductionIds)
             {
                 index++;
-                _activity.SetPhase($"Fast sync induction {index} of {inductionIds.Count}", $"Induction {inductionId} latest records");
+                _activity.SetPhase($"Fast sync induction {index} of {inductionIds.Count}", $"Induction {inductionId} latest {fastSyncRecordCount} records");
 
-                var records = await _onLocation.GetRecentInductionHoldersAsync(inductionId, 10, ct);
+                var records = await _onLocation.GetRecentInductionHoldersAsync(inductionId, fastSyncRecordCount, ct);
                 if (records.Count == 0) continue;
 
                 attemptsByInduction[inductionId] = LatestAttemptPerPerson(records, personIdField);
@@ -108,8 +111,7 @@ public class OnLocationSourceService : IOnLocationSourceService
         if (endpoint == null) return Array.Empty<JsonElement>();
 
         _activity.SetPhase("Fetching people", $"{personIds.Count} person record(s) affected by new induction records");
-        _activity.AddMatched(personIds.Count);
-        var people = await _onLocation.GetRecordsByIdAsync(endpoint, personIds, ct);
+        var people = await GetPeopleAsync(endpoint, personIds, ct);
         _logger.Information("Profile {Profile}: {Attempts} new induction record(s) affecting {People} person record(s)",
             profile.Id, attemptsByInduction.Values.Sum(a => a.Count), people.Count);
 
@@ -256,6 +258,7 @@ public class OnLocationSourceService : IOnLocationSourceService
     private const int InitialMatchPageSize = 200;
     private const int InitialMatchMaxPages = 200;
     private const int TargetedFetchThreshold = 150;
+    private const int SyncTargetedFetchThreshold = 100;
 
     private async Task<IReadOnlyList<JsonElement>> GetAllAsync(string endpoint, CancellationToken ct, IProgress<OnLocationFetchProgress>? progress = null, int progressBase = 0, int progressRange = 100)
     {
@@ -275,6 +278,22 @@ public class OnLocationSourceService : IOnLocationSourceService
             if (batch.Count < InitialMatchPageSize || string.IsNullOrWhiteSpace(cursor.Cursor) || cursor.Cursor == previousCursor) break;
         }
         return all;
+    }
+
+    private async Task<IReadOnlyList<JsonElement>> GetPeopleAsync(string endpoint, List<string> personIds, CancellationToken ct)
+    {
+        if (personIds.Count <= SyncTargetedFetchThreshold)
+        {
+            _logger.Information("Sync: fetching {Count} {Endpoint} record(s) by id", personIds.Count, endpoint);
+            return await _onLocation.GetRecordsByIdAsync(endpoint, personIds, ct);
+        }
+
+        _logger.Information("Sync: {Count} {Endpoint} record(s) exceeds targeted threshold of {Threshold}, enumerating all records and matching locally",
+            personIds.Count, endpoint, SyncTargetedFetchThreshold);
+        var all = await GetAllAsync(endpoint, ct);
+        return all
+            .Where(person => personIds.Contains(GetString(person, "id") ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+            .ToList();
     }
 
     // Inductions referenced by the field map are the candidates; the profile's selection narrows them so an
@@ -317,7 +336,7 @@ public class OnLocationSourceService : IOnLocationSourceService
     {
         var merged = JsonNode.Parse(person.GetRawText())!.AsObject();
         var inductions = new JsonObject();
-        foreach (var attempt in attempts)
+        foreach (var attempt in attempts.OrderBy(a => a.Key, StringComparer.OrdinalIgnoreCase))
             inductions[attempt.Key] = JsonNode.Parse(attempt.Value.GetRawText());
         merged["inductions"] = inductions;
         return JsonSerializer.SerializeToElement(merged);

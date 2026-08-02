@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v9.0": {},
     ".NETCoreApp,Version=v9.0/win-x64": {
-      "OnLocationGallagherBridge.Tray/1.0.9709.0": {
+      "OnLocationGallagherBridge.Tray/1.0.9710.0": {
         "dependencies": {
           "System.ServiceProcess.ServiceController": "9.0.0",
           "runtimepack.Microsoft.NETCore.App.Runtime.win-x64": "9.0.6",
@@ -871,7 +871,7 @@
     }
   },
   "libraries": {
-    "OnLocationGallagherBridge.Tray/1.0.9709.0": {
+    "OnLocationGallagherBridge.Tray/1.0.9710.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

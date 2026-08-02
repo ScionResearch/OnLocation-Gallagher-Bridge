@@ -17,10 +17,10 @@ public record SyncActivitySnapshot
     public string? LastRunProfileId { get; init; }
 
     public string Elapsed => StartedAt.HasValue
-        ? FormatDuration((UpdatedAt ?? DateTimeOffset.UtcNow) - StartedAt.Value)
+        ? FormatDuration((Running ? DateTimeOffset.UtcNow : (UpdatedAt ?? DateTimeOffset.UtcNow)) - StartedAt.Value)
         : "—";
 
-    private static string FormatDuration(TimeSpan span) => span.TotalHours >= 1
+    public static string FormatDuration(TimeSpan span) => span.TotalHours >= 1
         ? $"{(int)span.TotalHours}h {span.Minutes}m"
         : span.TotalMinutes >= 1
             ? $"{(int)span.TotalMinutes}m {span.Seconds}s"
@@ -30,6 +30,8 @@ public record SyncActivitySnapshot
 public interface ISyncActivity
 {
     SyncActivitySnapshot Snapshot { get; }
+    Task<bool> WaitForRunAsync(CancellationToken ct = default);
+    void ReleaseRunLock();
     void Begin(string profileId, string phase);
     void SetPhase(string phase, string? detail = null);
     void AddChecked(int count, string? detail = null);
@@ -44,12 +46,21 @@ public interface ISyncActivity
 public class SyncActivityService : ISyncActivity
 {
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _runLock = new(1, 1);
     private SyncActivitySnapshot _snapshot = new();
 
     public SyncActivitySnapshot Snapshot
     {
         get { lock (_gate) return _snapshot; }
     }
+
+    public async Task<bool> WaitForRunAsync(CancellationToken ct = default)
+    {
+        await _runLock.WaitAsync(ct);
+        return true;
+    }
+
+    public void ReleaseRunLock() => _runLock.Release();
 
     public void Begin(string profileId, string phase)
     {

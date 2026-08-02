@@ -6,9 +6,11 @@ using OnLocationGallagherBridge.Models;
 
 namespace OnLocationGallagherBridge.Services;
 
+public record JobProcessResult(string Action, string Outcome, bool Changed, bool Failed);
+
 public interface IJobProcessor
 {
-    Task ProcessAsync(SyncJob job, string correlationId, CancellationToken ct = default);
+    Task<JobProcessResult> ProcessAsync(SyncJob job, string correlationId, CancellationToken ct = default);
 }
 
 public class JobProcessor : IJobProcessor
@@ -30,11 +32,11 @@ public class JobProcessor : IJobProcessor
         _logger = logger ?? Serilog.Log.Logger.ForContext<JobProcessor>();
     }
 
-    public async Task ProcessAsync(SyncJob job, string correlationId, CancellationToken ct = default)
+    public async Task<JobProcessResult> ProcessAsync(SyncJob job, string correlationId, CancellationToken ct = default)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var profile = await _db.SyncProfiles.FindAsync(new object?[] { job.ProfileId }, cancellationToken: ct);
-        if (profile == null) return;
+        if (profile == null) return new JobProcessResult("Unknown", "Failed", false, true);
 
         using var sourceDoc = JsonDocument.Parse(job.PayloadJson);
         var source = sourceDoc.RootElement;
@@ -49,17 +51,7 @@ public class JobProcessor : IJobProcessor
             job.Status = "Complete";
             job.UpdatedAt = DateTimeOffset.UtcNow;
             await _db.SaveChangesAsync(ct);
-            await _audit.LogAsync(new AuditEntry
-            {
-                CorrelationId = correlationId,
-                ProfileId = profile.Id,
-                SourceId = entityId ?? "",
-                SourceDisplay = display,
-                Action = "Excluded",
-                Message = "Excluded during the initial record match, so nothing was sent to Gallagher.",
-                DurationMs = (int)stopwatch.ElapsedMilliseconds
-            });
-            return;
+            return new JobProcessResult("Excluded", "Success", false, false);
         }
 
         if (mapping == null)
@@ -89,20 +81,8 @@ public class JobProcessor : IJobProcessor
                     job.Status = "Complete";
                     job.UpdatedAt = DateTimeOffset.UtcNow;
                     await _db.SaveChangesAsync(ct);
-                    await _audit.LogAsync(new AuditEntry
-                    {
-                        CorrelationId = correlationId,
-                        ProfileId = profile.Id,
-                        SourceId = entityId ?? "",
-                        SourceDisplay = display,
-                        Action = "Ignored",
-                        Outcome = "Success",
-                        AfterJson = job.PayloadJson,
-                        Message = "No Gallagher cardholder matched this OnLocation record and the profile default is Ignore.",
-                        DurationMs = (int)stopwatch.ElapsedMilliseconds
-                    });
                     _logger.Information("Profile {Profile} source {Source} ({Display}) ignored by default", profile.Id, entityId, display);
-                    return;
+                    return new JobProcessResult("Ignored", "Success", false, false);
             }
         }
 
@@ -113,20 +93,6 @@ public class JobProcessor : IJobProcessor
             job.Error = null;
             job.UpdatedAt = DateTimeOffset.UtcNow;
             await _db.SaveChangesAsync(ct);
-            await _audit.LogAsync(new AuditEntry
-            {
-                CorrelationId = correlationId,
-                ProfileId = profile.Id,
-                SourceId = entityId ?? "",
-                SourceDisplay = display,
-                Action = "ManualReview",
-                Outcome = "Pending",
-                AfterJson = job.PayloadJson,
-                Message = mapping == null
-                    ? "No Gallagher cardholder is linked to this OnLocation record. Waiting for an operator to match or create one."
-                    : "The existing link has not been confirmed by an operator. Waiting for a decision on the Match Review page.",
-                DurationMs = (int)stopwatch.ElapsedMilliseconds
-            });
             _logger.Information("Profile {Profile} source {Source} ({Display}) queued for manual match", profile.Id, entityId, display);
             try
             {
@@ -136,7 +102,7 @@ public class JobProcessor : IJobProcessor
             {
                 _logger.Error(ex, "Failed to raise awaiting-user-input notification");
             }
-            return;
+            return new JobProcessResult("ManualReview", "Pending", false, false);
         }
 
         var payload = await _transform.BuildCardholderPayloadAsync(transformed, mapping.GallagherHref, ct);
@@ -148,22 +114,8 @@ public class JobProcessor : IJobProcessor
             job.Status = "Complete";
             job.UpdatedAt = DateTimeOffset.UtcNow;
             await _db.SaveChangesAsync(ct);
-            await _audit.LogAsync(new AuditEntry
-            {
-                CorrelationId = correlationId,
-                ProfileId = profile.Id,
-                SourceId = entityId ?? "",
-                SourceDisplay = display,
-                Action = "NoChange",
-                Outcome = "Success",
-                BeforeJson = job.PayloadJson,
-                AfterJson = JsonSerializer.Serialize(payload),
-                GallagherHref = mapping.GallagherHref,
-                Message = "No changes detected; skipped Gallagher update.",
-                DurationMs = (int)stopwatch.ElapsedMilliseconds
-            });
             _logger.Information("Profile {Profile} source {Source} ({Display}) already in sync with Gallagher; skipping update", profile.Id, entityId, display);
-            return;
+            return new JobProcessResult("NoChange", "Success", false, false);
         }
 
         ApplyBridgeMessage(profile, payload, string.IsNullOrEmpty(mapping.GallagherHref) ? "Created" : "Updated");
@@ -206,7 +158,7 @@ public class JobProcessor : IJobProcessor
                         DurationMs = (int)stopwatch.ElapsedMilliseconds
                     });
                     _logger.Warning("Profile {Profile} source {Source} ({Display}) had a stale link to {Href}", profile.Id, entityId, display, before);
-                    return;
+                    return new JobProcessResult("StaleLink", "Failed", true, true);
                 }
 
                 job.Status = "Failed";
@@ -236,7 +188,7 @@ public class JobProcessor : IJobProcessor
                 {
                     _logger.Error(ex, "Failed to raise failed-transaction notification");
                 }
-                return;
+                return new JobProcessResult("Update", "Failed", true, true);
             }
 
             action = "Update";
@@ -273,7 +225,7 @@ public class JobProcessor : IJobProcessor
                 {
                     _logger.Error(ex, "Failed to raise failed-transaction notification");
                 }
-                return;
+                return new JobProcessResult("Create", "Failed", true, true);
             }
 
             href = GetString(created.Value, "href");
@@ -304,6 +256,7 @@ public class JobProcessor : IJobProcessor
             DurationMs = (int)stopwatch.ElapsedMilliseconds
         });
         _logger.Information("Profile {Profile} source {Source} ({Display}) {Action} href {Href}", profile.Id, entityId, display, action, href);
+        return new JobProcessResult(action, "Success", true, false);
     }
 
     private static void ApplyBridgeMessage(SyncProfile profile, Dictionary<string, object?> payload, string action)

@@ -12,11 +12,11 @@ using System.Reflection;
 
 [assembly: System.Reflection.AssemblyCompanyAttribute("OnLocationGallagherBridge.Tray")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
-[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.9709.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.9709.0+a19d26c65bca67a845164e23db6070bf1949288a")]
+[assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.9710.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.9710.0+02bfdeeb4fd2498cc5a65ab64d4b04524e5779c6")]
 [assembly: System.Reflection.AssemblyProductAttribute("OnLocationGallagherBridge.Tray")]
 [assembly: System.Reflection.AssemblyTitleAttribute("OnLocationGallagherBridge.Tray")]
-[assembly: System.Reflection.AssemblyVersionAttribute("1.0.9709.0")]
+[assembly: System.Reflection.AssemblyVersionAttribute("1.0.9710.0")]
 [assembly: System.Runtime.Versioning.TargetPlatformAttribute("Windows7.0")]
 [assembly: System.Runtime.Versioning.SupportedOSPlatformAttribute("Windows7.0")]
 
