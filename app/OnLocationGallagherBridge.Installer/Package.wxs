@@ -1,6 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
-     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
+     xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
 
   <Package Name="OnLocation-Gallagher Bridge"
            Manufacturer="Bioeconomy Science Institute"
@@ -110,6 +111,17 @@
     </Component>
 
     <Icon Id="TrayIcon.ico" SourceFile="$(var.TrayPublishDir)\favicon.ico" />
+
+    <util:CloseApplication Id="CloseMainApp"
+                           Target="OnLocationGallagherBridge.exe"
+                           Condition="REMOVE=&quot;ALL&quot;"
+                           TerminateProcess="0"
+                           RebootPrompt="no" />
+    <util:CloseApplication Id="CloseTrayApp"
+                           Target="OnLocationGallagherBridge.Tray.exe"
+                           Condition="REMOVE=&quot;ALL&quot;"
+                           TerminateProcess="0"
+                           RebootPrompt="no" />
 
     <ui:WixUI Id="WixUI_InstallDir" />
     <UIRef Id="WixUI_ErrorProgressText" />

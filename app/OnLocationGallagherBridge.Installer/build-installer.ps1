@@ -1,7 +1,7 @@
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$Version = "1.0.$([int]((Get-Date).Date - [datetime]'2000-01-01').TotalDays).0"
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,6 +9,22 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appProject = Join-Path (Join-Path $root "..") "OnLocationGallagherBridge\OnLocationGallagherBridge.csproj"
 $trayProject = Join-Path (Join-Path $root "..") "OnLocationGallagherBridge.Tray\OnLocationGallagherBridge.Tray.csproj"
+
+if ([string]::IsNullOrEmpty($Version)) {
+    $projectVersion = Select-String -Path $appProject -Pattern '<Version>([^<]+)</Version>' | ForEach-Object { $_.Matches.Groups[1].Value }
+    if ([string]::IsNullOrEmpty($projectVersion)) {
+        $Version = "1.0.0.0"
+    }
+    else {
+        $Version = switch ($projectVersion.Split('.').Count) {
+            2 { "$projectVersion.0.0" }
+            3 { "$projectVersion.0" }
+            4 { $projectVersion }
+            default { "1.0.0.0" }
+        }
+    }
+}
+
 $publishDir = Join-Path $root "publishForMsi"
 $trayPublishDir = Join-Path $root "publishForMsiTray"
 $msiOutput = Join-Path $root "OnLocationGallagherBridge.Installer.msi"

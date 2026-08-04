@@ -1,4 +1,12 @@
 ﻿@inject OnLocationGallagherBridge.Services.IConfigurationStatusService StatusService
+@using System.Reflection
+@{
+    var appAssembly = typeof(OnLocationGallagherBridge.Services.ConfigService).Assembly;
+    var appVersion = appAssembly
+        .GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version
+        ?? appAssembly.GetName().Version?.ToString()
+        ?? "dev";
+}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -82,7 +90,7 @@
 
     <footer class="border-top footer text-muted mt-auto py-3">
         <div class="container text-center">
-            OnLocationGallagherBridge - <a href="https://github.com/PeakeElectronicInnovation/OnLocation-Gallagher-Bridge" target="_blank" rel="noopener">GitHub Repository</a>
+            OnLocationGallagherBridge <span class="text-secondary">v@(appVersion)</span> - <a href="https://github.com/PeakeElectronicInnovation/OnLocation-Gallagher-Bridge" target="_blank" rel="noopener">GitHub Repository</a>
         </div>
     </footer>
 

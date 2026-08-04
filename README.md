@@ -31,7 +31,7 @@ A Windows service that synchronises people and induction data from **MRI OnLocat
 
 ## Overview
 
-The bridge runs as a background Windows service with an ASP.NET Core web UI (default port 5000). It maintains one or more **sync profiles**, each defining a source entity type (Staff or Contractor Members), the inductions to track, a field mapping, match rules, and a polling schedule. On each poll the bridge:
+The bridge runs as a background Windows service with an ASP.NET Core web UI (default bind URL `https://*:5000`). It maintains one or more **sync profiles**, each defining a source entity type (Staff or Contractor Members), the inductions to track, a field mapping, match rules, and a polling schedule. On each poll the bridge:
 
 1. Fetches new or updated records from OnLocation (incrementally, using bookmarks).
 2. Reconciles each record against existing Gallagher cardholders using configurable match rules.
@@ -99,7 +99,6 @@ Key operations:
 |--------|-------------|
 | `CreateCardholderAsync` | POST a new cardholder. Handles 201-with-empty-body by reading the `Location` header. |
 | `UpdateCardholderAsync` | PATCH an existing cardholder. Returns a `GallagherWriteResult` with status code so the caller can distinguish 404 (stale link) from other failures. |
-| `FindCardholderByEmailAsync` | Search cardholders by email filter. |
 | `GetAllCardholdersAsync` | Full cardholder enumeration with pagination (used for initial match). |
 | `GetCompetenciesAsync` | All competency definitions (paginated). |
 | `GetDivisionsAsync` | All divisions. |
@@ -177,7 +176,7 @@ The audit page supports filtering by profile, action, outcome, and free-text sea
 
 ### Alert Service
 
-`AlertService` sends email alerts via SMTP (using MailKit) when configured. Intended for failure notifications and test alerts from the Settings page.
+`AlertService` sends email alerts via SMTP (using MailKit) when configured. Intended for failure notifications and test alerts from the Notifications page.
 
 ### Config Service
 
@@ -212,8 +211,6 @@ All state is stored in a SQLite database (`bridge.db`). EF Core code-first with 
 | `SyncJob` | A queued record to process. Status: Pending → Running → Complete / Failed / ManualReview / DeadLetter. |
 | `AuditLog` | Immutable record of every sync action with before/after JSON and error details. |
 | `ManualMatchQueue` | Records awaiting operator match decisions. Status: Pending → Approved / Rejected. |
-| `InductionCompetencyMap` | Maps an OnLocation induction ID to a Gallagher competency href. |
-| `FieldMap` | Persisted field mapping rows (used by the Mapping page UI). |
 
 Two default profiles are seeded on first run:
 
@@ -352,7 +349,7 @@ The **Audit** page provides a filterable, searchable view of every sync action w
 
 ## Tray Status Widget
 
-A system tray application (`OnLocationGallagherBridge.Tray`) is installed with the MSI and can also be launched from the Start Menu. It reads the service status file written by the bridge and displays:
+A system tray application (`OnLocationGallagherBridge.Tray`) is installed with the MSI. It is registered to start automatically for every user at logon (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`) and can also be launched from the Start Menu. It reads the service status file written by the bridge and displays:
 
 - **Icon colour** — green when the service is running and both connectors are OK, yellow when the service is running but a connector or configuration is unhealthy, red when the service is stopped or not installed, and gray when the status is unknown.
 - **Service status** — the actual Windows service state (`Running`, `Stopped`, etc.) and start type.
@@ -369,12 +366,13 @@ The tray widget checks the service state directly via `System.ServiceProcess.Ser
 
 ## Web UI
 
-The web UI is served at `http://localhost:5000` (or the configured URL) and provides the following pages:
+The web UI is served at the configured URL (default `https://*:5000`) and provides the following pages:
 
 | Page | Purpose |
 |------|---------|
 | **Dashboard** (`/Index`) | Profile list with enable/disable toggles, schedule controls (interval + sync window), live sync activity indicator, and recent audit feed. |
-| **Connector Settings** (`/Settings`) | OnLocation and Gallagher connection configuration, SMTP alert settings, connection tests, and testing reset controls. |
+| **Connector Settings** (`/Settings`) | OnLocation and Gallagher connection configuration, web host bind URL, connection tests, and reset controls. |
+| **Notifications** (`/Notifications`) | SMTP alert settings, recipients, notification groups, and test email. |
 | **Field Mapping** (`/Mapping`) | Configure source-to-target field maps per profile, including rule-based transforms, induction selection, competency mapping, division/access group defaults, and the bridge sync-message target field. |
 | **Initial Record Match** (`/MatchReview`) | Run the initial match, review candidate cardholders, approve/reject/create/exclude each record. |
 | **Manual Sync** (`/ManualSync`) | Trigger an immediate sync of one or all profiles outside the normal schedule. Reports progress to the same live activity indicator. |
@@ -387,7 +385,7 @@ The dashboard's live activity card polls a JSON endpoint every 2 seconds and aut
 
 ## Configuration
 
-All credentials and settings are stored in an encrypted JSON file (see [Config Service](#config-service)). The Settings page provides forms for:
+All credentials and settings are stored in an encrypted JSON file (see [Config Service](#config-service)). The web UI provides forms for:
 
 ### OnLocation
 
@@ -409,7 +407,7 @@ All credentials and settings are stored in an encrypted JSON file (see [Config S
 
 ### Web Host
 
-- **URLs** — the bind address (default `http://*:5000`).
+- **URLs** — the bind address (default `https://*:5000`; switch to `http://*:5000` if HTTPS is disabled in the web host settings).
 
 ### Logging
 
@@ -474,13 +472,15 @@ cd "app\OnLocationGallagherBridge"
 dotnet run
 ```
 
-The web UI is available at `http://localhost:5000`.
+The web UI is available at the configured URL, e.g. `https://localhost:5000`.
 
 ---
 
 ## Installer Package
 
 A WiX Toolset v4 MSI package installs the bridge service, the tray status widget, a Start Menu shortcut, and a Windows Firewall exception.
+
+Prebuilt installers are published on the GitHub Releases page. Download the latest `OnLocationGallagherBridge.Installer.msi` for the first-run setup below.
 
 ### Build the MSI
 
@@ -489,7 +489,7 @@ cd "app\OnLocationGallagherBridge.Installer"
 .\build-installer.ps1
 ```
 
-The MSI is written to `OnLocationGallagherBridge.Installer.msi` in the same directory. The default version number is daily-incrementing, so each day the MSI is treated as an upgrade. You can override it:
+The MSI is written to `OnLocationGallagherBridge.Installer.msi` in the same directory. The default version number is read from `OnLocationGallagherBridge.csproj`, so each version bump in the project is treated as an upgrade. You can override it:
 
 ```powershell
 .\build-installer.ps1 -Version "1.2.3.0"
@@ -509,8 +509,9 @@ Or double-click the MSI. The installer:
 2. Installs the tray widget to `C:\Program Files\OnLocation-Gallagher Bridge\Tray\`.
 3. Registers the service as `OnLocationGallagherBridge` with Automatic startup.
 4. Adds a Start Menu shortcut for the tray widget.
-5. Adds a Windows Firewall exception tied to the service executable so the web UI port is reachable.
-6. Starts the service.
+5. Registers the tray widget to start automatically for all users at logon (`HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`).
+6. Adds a Windows Firewall exception tied to the service executable so the web UI port is reachable.
+7. Starts the service.
 
 Major upgrades are supported. Re-running `msiexec` with a new version uninstalls the previous version and installs the new one, leaving `%ProgramData%\OnLocation-Gallagher-Bridge\` data intact.
 
@@ -526,7 +527,7 @@ Or use **Settings > Apps**. Data in `%ProgramData%\OnLocation-Gallagher-Bridge\`
 
 ## First-Run Setup
 
-1. **Open the web UI** from the system tray widget, or browse to `http://localhost:5000` (or the configured URL) on the server.
+1. **Open the web UI** from the system tray widget, or browse to `https://localhost:5000` (or the configured URL) on the server.
 2. **Configure connectors** on the **Connector Settings** page:
    - Enter OnLocation credentials and Gallagher Command Centre credentials.
    - Save settings.
@@ -574,6 +575,7 @@ OnLocation-Gallagher-Bridge/
 │       │   └── BridgeConfig.cs           # Configuration model
 │       ├── Services/
 │       │   ├── SyncEngine.cs             # Background sync loop
+│       │   ├── SyncProfileRunner.cs      # Per-profile sync orchestration
 │       │   ├── OnLocationConnector.cs    # OnLocation REST API client
 │       │   ├── OnLocationSourceService.cs # Source record fetching & merging
 │       │   ├── GallagherConnector.cs     # Gallagher REST API client
@@ -582,16 +584,33 @@ OnLocation-Gallagher-Bridge/
 │       │   ├── JobProcessor.cs           # Job lifecycle processor
 │       │   ├── AuditService.cs           # Audit log persistence
 │       │   ├── AlertService.cs           # SMTP email alerts
+│       │   ├── NotificationService.cs    # Notification dispatching
+│       │   ├── NotificationScheduler.cs  # Notification scheduling
 │       │   ├── ConfigService.cs          # Encrypted config (DPAPI)
-│       │   └── SyncActivityService.cs    # Live sync status tracking
+│       │   ├── ConfigurationStatusService.cs # Configuration readiness checks
+│       │   ├── ConnectionMonitorService.cs # Connector health monitoring
+│       │   ├── SyncActivityService.cs    # Live sync status tracking
+│       │   ├── StatusFileService.cs      # Service status file for tray widget
+│       │   ├── WebAuthService.cs         # Local web user authentication
+│       │   ├── ApplicationSessionService.cs # In-memory app session token
+│       │   ├── RecordGroupDisplay.cs     # Record group label helpers
+│       │   └── CertificateLoader.cs      # Certificate handling
 │       ├── Pages/
 │       │   ├── Index.cshtml / .cs        # Dashboard
 │       │   ├── Settings.cshtml / .cs     # Connector settings & resets
+│       │   ├── Notifications.cshtml / .cs # SMTP and notification settings
 │       │   ├── Mapping.cshtml / .cs      # Field mapping configuration
 │       │   ├── MatchReview.cshtml / .cs  # Initial record match
 │       │   ├── ManualSync.cshtml / .cs   # Manual sync trigger
 │       │   ├── Exceptions.cshtml / .cs   # Failed job management
 │       │   ├── Audit.cshtml / .cs        # Audit log viewer
+│       │   ├── Users.cshtml / .cs        # Local web user management
+│       │   ├── Login.cshtml / .cs        # Login page
+│       │   ├── Logout.cshtml / .cs      # Logout page
+│       │   ├── ChangePassword.cshtml / .cs # Password change
+│       │   ├── Privacy.cshtml / .cs      # Privacy page
+│       │   ├── AccessDenied.cshtml / .cs # Access denied page
+│       │   ├── Error.cshtml / .cs        # Error page
 │       │   └── Shared/_Layout.cshtml     # Nav layout
 │       ├── wwwroot/                      # Static assets (CSS, JS, Bootstrap)
 │       └── appsettings.json
@@ -606,8 +625,9 @@ OnLocation-Gallagher-Bridge/
 │   ├── bridge-design-plan.md             # Original design document
 │   └── bridge-build-guide.md             # Build phase guide
 ├── ref/                                  # API reference materials
-├── gallagher-cardholder-parser/          # Gallagher API exploration tool
-└── onlocation-member-parser/             # OnLocation API exploration tool
+└── test/
+    ├── gallagher-cardholder-parser/      # Gallagher API exploration tool
+    └── onlocation-member-parser/         # OnLocation API exploration tool
 ```
 
 ---
