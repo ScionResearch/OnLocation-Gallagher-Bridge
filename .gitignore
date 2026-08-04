@@ -57,3 +57,9 @@ desktop.ini
 # Local config / secrets (do not commit real production config)
 config.json.crypt
 *.config.json.crypt
+
+# Test parser local data, certs, and helper scripts that may contain secrets or PII
+test/curl.txt
+test/**/data/
+test/**/certs/
+test/**/__pycache__/
