@@ -52,7 +52,6 @@ public class WebHostConfig
     public string? Urls { get; set; } = "https://*:5000";
 
     public int Port { get; set; } = 5000;
-    public string? AdminPasswordHash { get; set; } = "";
     public HttpsConfig Https { get; set; } = new();
     public AuthConfig Auth { get; set; } = new();
 }

@@ -27,7 +27,6 @@ public interface IConfigurationStatusService
     Task<ConfigurationStatus> GetConnectorSettingsStatusAsync(BridgeConfig config, bool testConnections, CancellationToken ct = default);
     ConfigurationStatus GetFieldMappingStatus(SyncProfile? profile);
     ConfigurationStatus GetInitialMatchStatus(SyncProfile? profile);
-    Task<ConfigurationState> GetStateAsync(SyncProfile? profile, bool testConnections, CancellationToken ct = default);
     Task<ConfigurationState> GetOverallStateAsync(bool testConnections, CancellationToken ct = default);
     Task<ConfigurationStatus> GetInitialMatchStatusForAllAsync(CancellationToken ct = default);
 }
@@ -99,16 +98,6 @@ public class ConfigurationStatusService : IConfigurationStatusService
             return ConfigurationStatus.NotConfigured;
         if (profile.InitialMatchCompleted) return ConfigurationStatus.Complete;
         return ConfigurationStatus.Incomplete;
-    }
-
-    public async Task<ConfigurationState> GetStateAsync(SyncProfile? profile, bool testConnections, CancellationToken ct = default)
-    {
-        var config = _config.GetConfig();
-        var connector = await GetConnectorSettingsStatusAsync(config, testConnections, ct);
-        var mapping = GetFieldMappingStatus(profile);
-        var initial = GetInitialMatchStatus(profile);
-        var overall = MinStatus(connector, mapping, initial);
-        return new ConfigurationState(connector, mapping, initial, overall);
     }
 
     public async Task<ConfigurationState> GetOverallStateAsync(bool testConnections, CancellationToken ct = default)

@@ -22,7 +22,7 @@ Write-Host "Publishing tray app..." -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish tray failed" }
 
 Write-Host "Building MSI..." -ForegroundColor Cyan
-& wix build (Join-Path $root "Package.wxs") `
+& wix build -acceptEula wix7 (Join-Path $root "Package.wxs") `
     -define "PublishDir=$publishDir" `
     -define "TrayPublishDir=$trayPublishDir" `
     -define "ProductVersion=$Version" `

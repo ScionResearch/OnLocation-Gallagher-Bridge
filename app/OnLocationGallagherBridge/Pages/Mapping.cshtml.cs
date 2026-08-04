@@ -661,16 +661,6 @@ public class MappingModel : PageModel
         }, TimeSpan.FromMinutes(30));
     }
 
-    private static List<GallagherReference> ToReferences(IReadOnlyList<JsonElement> items) => items
-        .Select(item => new GallagherReference
-        {
-            Href = GetString(item, "href") ?? string.Empty,
-            Name = GetString(item, "name") ?? GetString(item, "id") ?? string.Empty
-        })
-        .Where(reference => !string.IsNullOrWhiteSpace(reference.Href))
-        .OrderBy(reference => reference.Name, StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
     private void LoadCachedSamples()
     {
         if (!_cache.TryGetValue(GetSampleCacheKey(), out MappingSampleCache? cached) || cached == null) return;
@@ -689,6 +679,16 @@ public class MappingModel : PageModel
         DivisionOptions = cached.DivisionOptions;
         AccessGroupOptions = cached.AccessGroupOptions;
     }
+
+    private static List<GallagherReference> ToReferences(IReadOnlyList<JsonElement> items) => items
+        .Select(item => new GallagherReference
+        {
+            Href = GetString(item, "href") ?? string.Empty,
+            Name = GetString(item, "name") ?? GetString(item, "id") ?? string.Empty
+        })
+        .Where(reference => !string.IsNullOrWhiteSpace(reference.Href))
+        .OrderBy(reference => reference.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     private string GetSampleCacheKey() => $"mapping-samples:{SelectedProfileId}";
 

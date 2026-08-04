@@ -77,6 +77,7 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 });
 
 builder.Services.AddSingleton(configService);
+builder.Services.AddSingleton<IApplicationSessionService, ApplicationSessionService>();
 builder.Services.AddDbContext<BridgeDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(dataDir, "bridge.db")}"));
 
@@ -131,6 +132,16 @@ if (authEnabled)
             options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromMinutes(webHostConfig.Auth.SessionTimeoutMinutes);
+            options.Events.OnValidatePrincipal = context =>
+            {
+                var sessionService = context.HttpContext.RequestServices.GetRequiredService<IApplicationSessionService>();
+                var token = context.Principal?.FindFirst("SessionToken")?.Value;
+                if (token != sessionService.SessionToken)
+                {
+                    context.RejectPrincipal();
+                }
+                return Task.CompletedTask;
+            };
         });
 
     builder.Services.AddAuthorization(options =>

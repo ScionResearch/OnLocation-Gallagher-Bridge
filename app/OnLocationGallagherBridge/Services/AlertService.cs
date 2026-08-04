@@ -6,7 +6,7 @@ namespace OnLocationGallagherBridge.Services;
 
 public interface IAlertService
 {
-    Task SendAlertAsync(string subject, string body, CancellationToken ct = default);
+    Task SendAlertAsync(string subject, string body, CancellationToken ct = default, bool force = false);
     Task<bool> TestAsync(CancellationToken ct = default);
 }
 
@@ -21,10 +21,10 @@ public class AlertService : IAlertService
         _logger = logger ?? Serilog.Log.Logger.ForContext<AlertService>();
     }
 
-    public async Task SendAlertAsync(string subject, string body, CancellationToken ct = default)
+    public async Task SendAlertAsync(string subject, string body, CancellationToken ct = default, bool force = false)
     {
         var smtp = _config.GetConfig().Smtp;
-        if (!smtp.Enabled || string.IsNullOrEmpty(smtp.Host) || string.IsNullOrWhiteSpace(smtp.From)) return;
+        if (!force && (!smtp.Enabled || string.IsNullOrEmpty(smtp.Host) || string.IsNullOrWhiteSpace(smtp.From))) return;
         try
         {
             var recipients = smtp.AlertRecipients
@@ -40,6 +40,10 @@ public class AlertService : IAlertService
                     .ToList();
             }
 
+            if (string.IsNullOrEmpty(smtp.Host))
+                throw new InvalidOperationException("No SMTP host has been configured.");
+            if (string.IsNullOrWhiteSpace(smtp.From))
+                throw new InvalidOperationException("No From address has been configured.");
             if (!recipients.Any())
             {
                 _logger.Warning("Cannot send alert: no recipients have been configured");
@@ -70,13 +74,13 @@ public class AlertService : IAlertService
     public async Task<bool> TestAsync(CancellationToken ct = default)
     {
         var smtp = _config.GetConfig().Smtp;
-        if (!smtp.Enabled || string.IsNullOrEmpty(smtp.Host) || string.IsNullOrWhiteSpace(smtp.From))
+        if (string.IsNullOrEmpty(smtp.Host) || string.IsNullOrWhiteSpace(smtp.From))
             return false;
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
-            await SendAlertAsync("Test alert", "This is a test alert from the OnLocation-Gallagher bridge.", cts.Token);
+            await SendAlertAsync("Test alert", "This is a test alert from the OnLocation-Gallagher bridge.", cts.Token, force: true);
             return true;
         }
         catch

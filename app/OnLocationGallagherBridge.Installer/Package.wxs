@@ -24,6 +24,7 @@
       <ComponentRef Id="ServiceComponent" />
       <ComponentGroupRef Id="TrayComponents" />
       <ComponentRef Id="TrayShortcutComponent" />
+      <ComponentRef Id="TrayAutoStartComponent" />
     </Feature>
 
     <StandardDirectory Id="ProgramFiles64Folder">
@@ -96,7 +97,16 @@
                 WorkingDirectory="TrayFolder"
                 Icon="TrayIcon.ico" />
       <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall" />
-      <RegistryValue Root="HKCU" Key="Software\BSI\OnLocationGallagherBridge" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKLM" Key="Software\BSI\OnLocationGallagherBridge" Name="TrayShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Component Id="TrayAutoStartComponent" Directory="TrayFolder" Guid="3A8C9B2D-5E4F-4A7B-9C1D-6E8F0A2B4C5D">
+      <RegistryValue Root="HKLM"
+                     Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+                     Name="OnLocationGallagherBridgeTray"
+                     Type="string"
+                     Value="[TrayFolder]OnLocationGallagherBridge.Tray.exe"
+                     KeyPath="yes" />
     </Component>
 
     <Icon Id="TrayIcon.ico" SourceFile="$(var.TrayPublishDir)\favicon.ico" />

@@ -30,7 +30,6 @@ public class OnLocationConnector : IOnLocationConnector
 {
     public const int DefaultPageSize = 100;
     public const int MaxPageSize = 1000;
-    private const int MaxPagesPerRequest = 200;
     // Measured against the live tenant: holder response time scales with `limit`, roughly 0.3s per
     // record (10 records ~5s, 50 ~15s, 100 ~30s). Larger pages exceed the request timeout, so this
     // stays small and pages instead.

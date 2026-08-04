@@ -54,7 +54,18 @@ public class NotificationsModel : PageModel
     public async Task<IActionResult> OnPostTestAsync()
     {
         var ok = await _alertService.TestAsync();
-        Message = ok ? "Test email sent. Check the recipient inbox." : "Test email failed. Check the SMTP settings and logs.";
+        if (!ok)
+        {
+            Message = "Test email failed. Check the SMTP settings and logs.";
+        }
+        else if (!Notifications.Enabled)
+        {
+            Message = "Test email sent. Note: notifications are currently disabled, so automatic alerts will not be sent until notifications are enabled and saved.";
+        }
+        else
+        {
+            Message = "Test email sent. Check the recipient inbox.";
+        }
         return Page();
     }
 }

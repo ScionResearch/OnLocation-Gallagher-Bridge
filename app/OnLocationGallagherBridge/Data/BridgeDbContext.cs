@@ -13,8 +13,6 @@ public class BridgeDbContext : DbContext
     public DbSet<SyncJob> SyncJobs { get; set; } = null!;
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
     public DbSet<ManualMatchQueue> ManualMatchQueues { get; set; } = null!;
-    public DbSet<InductionCompetencyMap> InductionCompetencyMaps { get; set; } = null!;
-    public DbSet<FieldMap> FieldMaps { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

@@ -17,7 +17,6 @@ public interface IGallagherConnector
     bool? LastConnectionResult { get; }
     string? LastConnectionError { get; }
     Task<bool> TestConnectionAsync(CancellationToken ct = default, bool raiseNotifications = false);
-    Task<JsonElement?> FindCardholderByEmailAsync(string email, CancellationToken ct = default);
     Task<JsonElement?> CreateCardholderAsync(object payload, CancellationToken ct = default);
     Task<GallagherWriteResult> UpdateCardholderAsync(string href, object payload, CancellationToken ct = default);
     Task<IReadOnlyList<JsonElement>> GetCompetenciesAsync(CancellationToken ct = default);
@@ -151,33 +150,6 @@ public class GallagherConnector : IGallagherConnector
         _apiRoot = doc.RootElement.Clone();
         _logger.Information("Gallagher API root discovered");
         return _apiRoot.Value;
-    }
-
-    public async Task<JsonElement?> FindCardholderByEmailAsync(string email, CancellationToken ct = default)
-    {
-        var root = await GetApiRootAsync(ct);
-        if (!root.HasValue) return null;
-        var client = CreateClient();
-        var href = GetHref(root.Value, "cardholders");
-        if (string.IsNullOrEmpty(href)) return null;
-
-        var encoded = Uri.EscapeDataString($"email:{email}");
-        var response = await client.GetAsync($"{href}?filter={encoded}&limit=1", ct);
-        if (!response.IsSuccessStatusCode)
-        {
-            var body = await response.Content.ReadAsStringAsync(ct);
-            _lastError = $"Gallagher search failed: {(int)response.StatusCode} {body}";
-            _logger.Error(_lastError);
-            return null;
-        }
-        var json = await response.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(json);
-        if (doc.RootElement.ValueKind == JsonValueKind.Array) return doc.RootElement.EnumerateArray().FirstOrDefault().CloneIfNotDefault();
-        if (doc.RootElement.TryGetProperty("results", out var results) && results.ValueKind == JsonValueKind.Array)
-            return results.EnumerateArray().FirstOrDefault().CloneIfNotDefault();
-        if (doc.RootElement.TryGetProperty("cardholders", out var cardholders) && cardholders.ValueKind == JsonValueKind.Array)
-            return cardholders.EnumerateArray().FirstOrDefault().CloneIfNotDefault();
-        return null;
     }
 
     public async Task<JsonElement?> CreateCardholderAsync(object payload, CancellationToken ct = default)

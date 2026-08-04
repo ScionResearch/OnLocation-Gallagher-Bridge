@@ -136,6 +136,8 @@ public class MatchReviewModel : PageModel
     public async Task OnGetAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
+        if (Request.Query.TryGetValue("completedSinceDays", out var daysValue) && int.TryParse(daysValue, out var days))
+            CompletedSinceDays = days;
         InitialMatchStatus = await _statusService.GetInitialMatchStatusForAllAsync(ct);
         if (TempData["Message"] is string message) Message = message;
         var pushRequestId = Request.Query["pushRequestId"].FirstOrDefault();
@@ -226,7 +228,7 @@ public class MatchReviewModel : PageModel
 
         _ = Task.Run(async () => await ExecutePreviewAsync(requestId, profileId, completedSinceDays, globalResolution, selectedInductionIds, offeredInductionIds, CancellationToken.None), CancellationToken.None);
 
-        return RedirectToPage(new { previewRequestId = requestId, profileId });
+        return RedirectToPage(new { previewRequestId = requestId, profileId, completedSinceDays });
     }
 
     private async Task ExecutePreviewAsync(string requestId, string profileId, int completedSinceDays, string globalResolution, List<string> selectedInductionIds, List<string> offeredInductionIds, CancellationToken ct)

@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
@@ -9,6 +8,13 @@ using OnLocationGallagherBridge.Services;
 using Serilog;
 
 namespace OnLocationGallagherBridge.Pages;
+
+public enum ConnectionHealth
+{
+    Checking,
+    Ok,
+    Fail
+}
 
 public class IndexModel : PageModel
 {
@@ -39,8 +45,6 @@ public class IndexModel : PageModel
     public int PendingJobs { get; set; }
     public int FailedJobs { get; set; }
     public int ManualMatches { get; set; }
-    public bool OnLocationOk { get; set; }
-    public bool GallagherOk { get; set; }
     public IReadOnlyList<AuditLog> RecentAudit { get; set; } = Array.Empty<AuditLog>();
     public string? Message { get; set; }
     public DateTimeOffset? NextRun { get; set; }
@@ -101,10 +105,10 @@ public class IndexModel : PageModel
         PendingJobs = await _db.SyncJobs.CountAsync(j => j.Status == "Pending", ct);
         FailedJobs = await _db.SyncJobs.CountAsync(j => j.Status == "Failed", ct);
         ManualMatches = await _db.ManualMatchQueues.CountAsync(m => m.Status == "Pending", ct);
-        OnLocationOk = await _onLocation.TestConnectionAsync(ct);
-        GallagherOk = await _gallagher.TestConnectionAsync(ct);
         OverallStatus = await _statusService.GetOverallStateAsync(testConnections: false, ct);
-        if (OverallStatus.ConnectorSettings == ConfigurationStatus.Complete && (!OnLocationOk || !GallagherOk))
+        var onLocationOk = _onLocation.LastConnectionResult;
+        var gallagherOk = _gallagher.LastConnectionResult;
+        if (OverallStatus.ConnectorSettings == ConfigurationStatus.Complete && (onLocationOk == false || gallagherOk == false))
         {
             var overall = new[] { ConfigurationStatus.Faulty, OverallStatus.FieldMapping, OverallStatus.InitialMatch }.Min();
             OverallStatus = OverallStatus with { ConnectorSettings = ConfigurationStatus.Faulty, Overall = overall };
@@ -139,6 +143,24 @@ public class IndexModel : PageModel
             lastRunFinishedAt = snapshot.LastRunFinishedAt?.ToLocalTime().ToString("g")
         });
     }
+
+    // Polled by the dashboard so connection status can refresh in the background.
+    public IActionResult OnGetConnectionStatus()
+    {
+        return new JsonResult(new
+        {
+            onLocation = MapConnectionHealth(_onLocation.LastConnectionResult).ToString().ToLowerInvariant(),
+            gallagher = MapConnectionHealth(_gallagher.LastConnectionResult).ToString().ToLowerInvariant()
+        });
+    }
+
+    private static ConnectionHealth MapConnectionHealth(bool? result) =>
+        result switch
+        {
+            true => ConnectionHealth.Ok,
+            false => ConnectionHealth.Fail,
+            _ => ConnectionHealth.Checking
+        };
 
     public async Task<IActionResult> OnPostScheduleAsync(string profileId, int fastMinutes, int fastRecordCount, int fullDays, string fullTime, int fullMonths, CancellationToken ct)
     {
@@ -257,12 +279,4 @@ public class IndexModel : PageModel
         return RedirectToPage();
     }
 
-    private static string? GetId(JsonElement record)
-    {
-        if (record.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String)
-            return id.GetString();
-        if (record.TryGetProperty("id", out var idNum) && idNum.ValueKind == JsonValueKind.Number)
-            return idNum.ToString();
-        return null;
-    }
 }

@@ -20,10 +20,12 @@ public interface IWebAuthService
 public class WebAuthService : IWebAuthService
 {
     private readonly ConfigService _config;
+    private readonly IApplicationSessionService _session;
 
-    public WebAuthService(ConfigService config)
+    public WebAuthService(ConfigService config, IApplicationSessionService session)
     {
         _config = config;
+        _session = session;
     }
 
     public WebUser? FindUser(string username)
@@ -182,7 +184,8 @@ public class WebAuthService : IWebAuthService
         var claims = new List<Claim>
         {
             new(ClaimTypes.Name, user.Username),
-            new(ClaimTypes.NameIdentifier, user.Username)
+            new(ClaimTypes.NameIdentifier, user.Username),
+            new("SessionToken", _session.SessionToken)
         };
 
         if (user.IsAdmin)

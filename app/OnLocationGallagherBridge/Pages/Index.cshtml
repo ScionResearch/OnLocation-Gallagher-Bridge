@@ -22,8 +22,8 @@
                 <div class="row g-3">
                     <div class="col-md-6 border-end">
                         <h6 class="card-subtitle mb-2 text-muted">Connection State</h6>
-                        <p class="card-text mb-1">OnLocation: <span class="status-text text-@(Model.OnLocationOk ? "success" : "danger")">@(Model.OnLocationOk ? "OK" : "Fail")</span></p>
-                        <p class="card-text mb-0">Gallagher: <span class="status-text text-@(Model.GallagherOk ? "success" : "danger")">@(Model.GallagherOk ? "OK" : "Fail")</span></p>
+                        <p class="card-text mb-1">OnLocation: <span id="onlocation-status" class="status-text text-secondary"><span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking connection...</span></p>
+                        <p class="card-text mb-0">Gallagher: <span id="gallagher-status" class="status-text text-secondary"><span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Checking connection...</span></p>
                     </div>
                     <div class="col-md-6">
                         <h6 class="card-subtitle mb-2 text-muted">Settings State</h6>
@@ -275,6 +275,31 @@
 
             poll();
             setInterval(poll, 1000);
+
+            function updateConnectionStatus(id, status) {
+                var el = document.getElementById(id);
+                if (!el) return;
+                var text = status === 'ok' ? 'OK' : (status === 'fail' ? 'Fail' : 'Checking connection...');
+                var cls = status === 'ok' ? 'text-success' : (status === 'fail' ? 'text-danger' : 'text-secondary');
+                var spinner = status === 'checking' ? '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> ' : '';
+                el.className = 'status-text ' + cls;
+                el.innerHTML = spinner + text;
+            }
+
+            async function pollConnectionStatus() {
+                try {
+                    var response = await fetch('?handler=ConnectionStatus', { headers: { 'Accept': 'application/json' } });
+                    if (!response.ok) return;
+                    var status = await response.json();
+                    updateConnectionStatus('onlocation-status', status.onLocation);
+                    updateConnectionStatus('gallagher-status', status.gallagher);
+                } catch (e) {
+                    // A failed poll is not worth surfacing; the next one will retry.
+                }
+            }
+
+            pollConnectionStatus();
+            setInterval(pollConnectionStatus, 2000);
 
             // Disable schedule Apply buttons until a value changes.
             document.querySelectorAll('form.schedule-form').forEach(function (form) {

@@ -101,6 +101,8 @@ public class SettingsModel : PageModel
     public async Task<IActionResult> OnPostTestOnLocationAsync()
     {
         LogModelStateErrors();
+        var current = _config.GetConfig();
+        Config.WebHost.Auth = current.WebHost.Auth;
         _config.SetConfig(Config);
         var ok = await _onLocation.TestConnectionAsync();
         if (ok)
@@ -117,6 +119,8 @@ public class SettingsModel : PageModel
     public async Task<IActionResult> OnPostTestGallagherAsync()
     {
         LogModelStateErrors();
+        var current = _config.GetConfig();
+        Config.WebHost.Auth = current.WebHost.Auth;
         _config.SetConfig(Config);
         var ok = await _gallagher.TestConnectionAsync();
         if (ok)

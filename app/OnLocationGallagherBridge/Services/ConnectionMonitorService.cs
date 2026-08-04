@@ -16,7 +16,7 @@ public class ConnectionMonitorService : BackgroundService
         _logger.LogInformation("Connection monitor started");
 
         // Give the service a moment to settle before the first check.
-        await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
+        await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -24,28 +24,27 @@ public class ConnectionMonitorService : BackgroundService
             {
                 using var scope = _services.CreateScope();
                 var config = scope.ServiceProvider.GetRequiredService<ConfigService>();
-                if (config.GetConfig().Notifications.Enabled)
+                var onLocation = scope.ServiceProvider.GetRequiredService<IOnLocationConnector>();
+                var gallagher = scope.ServiceProvider.GetRequiredService<IGallagherConnector>();
+
+                var raiseNotifications = config.GetConfig().Notifications.Enabled;
+
+                try
                 {
-                    var onLocation = scope.ServiceProvider.GetRequiredService<IOnLocationConnector>();
-                    var gallagher = scope.ServiceProvider.GetRequiredService<IGallagherConnector>();
+                    await onLocation.TestConnectionAsync(stoppingToken, raiseNotifications);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "OnLocation connection monitor check failed");
+                }
 
-                    try
-                    {
-                        await onLocation.TestConnectionAsync(stoppingToken, raiseNotifications: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "OnLocation connection monitor check failed");
-                    }
-
-                    try
-                    {
-                        await gallagher.TestConnectionAsync(stoppingToken, raiseNotifications: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Gallagher connection monitor check failed");
-                    }
+                try
+                {
+                    await gallagher.TestConnectionAsync(stoppingToken, raiseNotifications);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Gallagher connection monitor check failed");
                 }
             }
             catch (OperationCanceledException)
@@ -57,7 +56,7 @@ public class ConnectionMonitorService : BackgroundService
                 _logger.LogError(ex, "Connection monitor failed");
             }
 
-            await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
+            await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
         }
     }
 }

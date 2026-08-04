@@ -129,26 +129,3 @@ public class ManualMatchQueue
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
-
-public class InductionCompetencyMap
-{
-    [Key]
-    public int Id { get; set; }
-    public string OnLocationInductionId { get; set; } = string.Empty;
-    public string GallagherCompetencyHref { get; set; } = string.Empty;
-    public string? MappedBy { get; set; }
-    public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
-    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
-}
-
-public class FieldMap
-{
-    [Key]
-    public int Id { get; set; }
-    public string ProfileId { get; set; } = string.Empty;
-    public string SourceField { get; set; } = string.Empty;
-    public string TargetField { get; set; } = string.Empty;
-    public string Transform { get; set; } = "copy";
-    public string? OptionsJson { get; set; }
-    public int SortOrder { get; set; }
-}
