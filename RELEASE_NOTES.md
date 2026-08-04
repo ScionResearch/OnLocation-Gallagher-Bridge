@@ -1,8 +1,8 @@
 # OnLocation-Gallagher Bridge Release Notes
 
-## v1.0.0 — 4 August 2026
+## v1.0.0.0 — 4 August 2026
 
-Initial stable release of the OnLocation-Gallagher Bridge.
+Initial stable release for testing of the OnLocation-Gallagher Bridge.
 
 ### What’s included
 
@@ -20,12 +20,12 @@ Initial stable release of the OnLocation-Gallagher Bridge.
 
 ### Asset
 
-- `OnLocationGallagherBridge.Installer.msi` — per-machine installer.
+- `OnLocationGallagherBridge-v1.0.0.0.msi` — per-machine installer.
 
 ### Install
 
 ```powershell
-msiexec /i "OnLocationGallagherBridge.Installer.msi" /qn /norestart
+msiexec /i "OnLocationGallagherBridge-v1.0.0.0.msi" /qn /norestart
 ```
 
 See [README.md](README.md) for first-run setup and configuration details.
