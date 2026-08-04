@@ -47,40 +47,7 @@ Deployment is via a WiX-based MSI that installs the service, a system tray statu
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Windows Service Host                      │
-│                                                               │
-│  ┌──────────────┐   ┌───────────────┐   ┌────────────────┐  │
-│  │  SyncEngine   │──▶│ OnLocationSource │──▶│ OnLocationConnector │  │
-│  │ (Background   │   │    Service       │   │    (REST API)       │  │
-│  │  Service)     │   └───────────────┘   └────────────────┘  │
-│  │               │                                           │
-│  │               │   ┌───────────────┐   ┌────────────────┐  │
-│  │               │──▶│  JobProcessor   │──▶│ GallagherConnector  │  │
-│  │               │   │                 │   │    (REST API)       │  │
-│  │               │   │ TransformEngine │   └────────────────┘  │
-│  │               │   │ IdentityMatcher │                       │
-│  │               │   └───────────────┘                       │
-│  │               │                                           │
-│  │               │   ┌───────────────┐                       │
-│  │               │──▶│  AuditService   │                       │
-│  │               │   └───────────────┘                       │
-│  └──────────────┘                                           │
-│                                                               │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │               ASP.NET Core Razor Pages UI              │    │
-│  │  Dashboard · Settings · Mapping · MatchReview ·        │    │
-│  │  ManualSync · Exceptions · Audit                       │    │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                               │
-│  ┌──────────┐  ┌──────────────┐  ┌────────────────────┐     │
-│  │ SQLite    │  │ ConfigService  │  │  Serilog File Logs  │     │
-│  │ bridge.db │  │ config.json    │  │  bridge-YYYYMMDD.log│     │
-│  │           │  │ .crypt (DPAPI) │  │                     │     │
-│  └──────────┘  └──────────────┘  └────────────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
+<img src="images/architecture.png" alt="Architecture diagram">
 
 All components run in a single process. The sync engine is a `BackgroundService` that wakes every minute, checks which profiles are due, and processes them sequentially. The web UI is served by the same process, so operators can configure, monitor, and trigger syncs without a separate tool. A separate system tray application reads the service status file and lets users start, stop, restart, and enable/disable the service, as well as open the web UI at the configured port.
 
