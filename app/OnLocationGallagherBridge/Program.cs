@@ -2,6 +2,9 @@ using System.Data;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -11,6 +14,8 @@ using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
 using OnLocationGallagherBridge.Services;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 var assemblyLocation = Assembly.GetExecutingAssembly().Location;
 var appRoot = Path.GetDirectoryName(assemblyLocation) ?? AppContext.BaseDirectory;
@@ -28,19 +33,34 @@ Directory.CreateDirectory(logDir);
 var configPath = Path.Combine(dataDir, "config");
 Directory.CreateDirectory(configPath);
 
-Log.Logger = new LoggerConfiguration()
-    .MinimumLevel.Debug()
-    .MinimumLevel.Override("Microsoft", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("System", Serilog.Events.LogEventLevel.Warning)
-    .WriteTo.Console(restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Information)
-    .WriteTo.File(Path.Combine(logDir, "bridge-.log"), rollingInterval: RollingInterval.Day, retainedFileCountLimit: 30, restrictedToMinimumLevel: Serilog.Events.LogEventLevel.Debug)
-    .CreateLogger();
-
+// Config must be loaded before the logger is built so the persisted minimum log level takes effect
+// immediately on startup, rather than always starting in Debug (which writes full staff PII to disk).
 var configService = new ConfigService();
 await configService.LoadAsync();
+
+// Break-glass local recovery: lets an operator with console/RDP access to the host reset a web login
+// password without going through the (possibly locked-out) web UI. Intentionally bypasses the web host
+// entirely so it works even if the Windows Service won't start.
+if (args.Length > 0 && string.Equals(args[0], "--reset-password", StringComparison.OrdinalIgnoreCase))
+{
+    await RunResetPasswordAsync(configService, args.ElementAtOrDefault(1));
+    return;
+}
+
+var loggingConfig = configService.GetConfig().Logging;
+var levelSwitch = new LoggingLevelSwitch(ParseLogLevel(loggingConfig.MinimumLevel));
+var retainedDays = loggingConfig.RetentionDays > 0 ? loggingConfig.RetentionDays : 30;
+
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.ControlledBy(levelSwitch)
+    .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.Extensions.Http", LogEventLevel.Warning)
+    .MinimumLevel.Override("System", LogEventLevel.Warning)
+    .WriteTo.Console(restrictedToMinimumLevel: LogEventLevel.Information)
+    .WriteTo.File(Path.Combine(logDir, "bridge-.log"), rollingInterval: RollingInterval.Day, retainedFileCountLimit: retainedDays)
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -77,6 +97,7 @@ builder.WebHost.ConfigureKestrel((context, options) =>
 });
 
 builder.Services.AddSingleton(configService);
+builder.Services.AddSingleton(levelSwitch);
 builder.Services.AddSingleton<IApplicationSessionService, ApplicationSessionService>();
 builder.Services.AddDbContext<BridgeDbContext>(options =>
     options.UseSqlite($"Data Source={Path.Combine(dataDir, "bridge.db")}"));
@@ -132,15 +153,41 @@ if (authEnabled)
             options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromMinutes(webHostConfig.Auth.SessionTimeoutMinutes);
-            options.Events.OnValidatePrincipal = context =>
+            options.Events.OnValidatePrincipal = async context =>
             {
                 var sessionService = context.HttpContext.RequestServices.GetRequiredService<IApplicationSessionService>();
                 var token = context.Principal?.FindFirst("SessionToken")?.Value;
                 if (token != sessionService.SessionToken)
                 {
                     context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
                 }
-                return Task.CompletedTask;
+
+                // The SessionToken check above only catches a full app restart. Re-check the user record on
+                // every request so a disabled or deleted account is logged out immediately, rather than
+                // staying valid until the cookie's sliding expiration lapses.
+                var username = context.Principal?.Identity?.Name;
+                var webAuth = context.HttpContext.RequestServices.GetRequiredService<IWebAuthService>();
+                var user = string.IsNullOrEmpty(username) ? null : webAuth.FindUser(username);
+                if (user is null || !user.IsEnabled)
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
+                }
+
+                // Keep role/admin/password-change claims in sync with the current user record so that
+                // permission changes (e.g. an admin demoting a user) take effect without requiring re-login.
+                var identity = (ClaimsIdentity)context.Principal!.Identity!;
+                var isAdminClaim = identity.HasClaim(ClaimTypes.Role, "Admin");
+                var requiresChangeClaim = identity.HasClaim("RequirePasswordChange", "true");
+                if (isAdminClaim != user.IsAdmin || requiresChangeClaim != user.RequirePasswordChange)
+                {
+                    var newIdentity = webAuth.CreateClaimsIdentity(user);
+                    context.ReplacePrincipal(new ClaimsPrincipal(newIdentity));
+                    context.ShouldRenew = true;
+                }
             };
         });
 
@@ -211,6 +258,104 @@ using (var scope = app.Services.CreateScope())
 
 app.Run();
 Log.CloseAndFlush();
+
+static LogEventLevel ParseLogLevel(string? value) =>
+    Enum.TryParse<LogEventLevel>(value, ignoreCase: true, out var level) ? level : LogEventLevel.Information;
+
+static async Task RunResetPasswordAsync(ConfigService configService, string? username)
+{
+    var cfg = configService.GetConfig();
+    if (!cfg.WebHost.Auth.Users.Any())
+    {
+        Console.WriteLine("No local users are configured yet. Start the service normally; a default admin account will be created automatically.");
+        Environment.Exit(1);
+        return;
+    }
+
+    var user = string.IsNullOrWhiteSpace(username)
+        ? null
+        : cfg.WebHost.Auth.Users.FirstOrDefault(u => string.Equals(u.Username, username, StringComparison.OrdinalIgnoreCase));
+
+    if (user is null)
+    {
+        Console.WriteLine(string.IsNullOrWhiteSpace(username)
+            ? "Usage: OnLocationGallagherBridge.exe --reset-password <username>"
+            : $"No user named '{username}' was found.");
+        Console.WriteLine("Available users:");
+        foreach (var u in cfg.WebHost.Auth.Users)
+            Console.WriteLine($"  {u.Username}{(u.IsAdmin ? " (admin)" : "")}{(u.IsEnabled ? "" : " (disabled)")}");
+        Environment.Exit(1);
+        return;
+    }
+
+    Console.WriteLine("WARNING: Stop the OnLocationGallagherBridge Windows Service first (net stop OnLocationGallagherBridge).");
+    Console.WriteLine("Resetting a password while the service is running risks the service overwriting this change when it next saves its configuration.");
+    Console.WriteLine();
+    Console.WriteLine($"Resetting password for user '{user.Username}'...");
+
+    var webAuth = new WebAuthService(configService, new ApplicationSessionService());
+    var newPassword = GenerateRandomPassword(cfg.WebHost.Auth);
+    webAuth.SetPassword(user, newPassword);
+    user.RequirePasswordChange = true;
+    user.IsEnabled = true;
+    user.FailedLoginAttempts = 0;
+    user.LockoutEndUtc = null;
+
+    try
+    {
+        await configService.SaveAsync(cfg);
+    }
+    catch (UnauthorizedAccessException)
+    {
+        // The config file lives under %ProgramData%, which the Windows Service writes to as SYSTEM.
+        // A normal (non-elevated) command prompt runs with a filtered admin token that can read it but
+        // not write it, even for a local administrator, so this needs an elevated prompt.
+        Console.WriteLine();
+        Console.WriteLine("Access denied writing the configuration file.");
+        Console.WriteLine("Re-run this command from an elevated command prompt (right-click Command Prompt, 'Run as administrator').");
+        Environment.Exit(1);
+        return;
+    }
+
+    Console.WriteLine();
+    Console.WriteLine("Password reset. Temporary password (you will be required to change it on next login):");
+    Console.WriteLine();
+    Console.WriteLine($"    {newPassword}");
+    Console.WriteLine();
+    Environment.Exit(0);
+}
+
+static string GenerateRandomPassword(AuthConfig rules)
+{
+    const string upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+    const string lower = "abcdefghijkmnopqrstuvwxyz";
+    const string digits = "23456789";
+    const string special = "!@#$%^&*-_=+";
+
+    var pools = new List<string>();
+    if (rules.PasswordRequireUppercase) pools.Add(upper);
+    if (rules.PasswordRequireLowercase) pools.Add(lower);
+    if (rules.PasswordRequireDigit) pools.Add(digits);
+    if (rules.PasswordRequireNonAlphanumeric) pools.Add(special);
+    if (pools.Count == 0) pools.Add(upper + lower + digits);
+
+    var length = Math.Max(16, rules.PasswordMinimumLength);
+    var all = string.Concat(pools);
+    var chars = new List<char>();
+    foreach (var pool in pools)
+        chars.Add(pool[RandomNumberGenerator.GetInt32(pool.Length)]);
+    while (chars.Count < length)
+        chars.Add(all[RandomNumberGenerator.GetInt32(all.Length)]);
+
+    // Shuffle so the guaranteed-category characters aren't always at the start.
+    for (var i = chars.Count - 1; i > 0; i--)
+    {
+        var j = RandomNumberGenerator.GetInt32(i + 1);
+        (chars[i], chars[j]) = (chars[j], chars[i]);
+    }
+
+    return new string(chars.ToArray());
+}
 
 static async Task EnsureInitialMatchColumnsAsync(BridgeDbContext db)
 {

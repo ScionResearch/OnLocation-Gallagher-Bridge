@@ -302,7 +302,8 @@ public class GallagherConnector : IGallagherConnector
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
-        _logger.Information("Gallagher cardholders returned {StatusCode} ({Length} bytes): {Json}", (int)response.StatusCode, json.Length, json);
+        _logger.Information("Gallagher cardholders returned {StatusCode} ({Length} bytes)", (int)response.StatusCode, json.Length);
+        _logger.Debug("Gallagher cardholders body: {Json}", json);
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind == JsonValueKind.Array)
             foreach (var item in doc.RootElement.EnumerateArray()) results.Add(item.Clone());

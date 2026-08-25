@@ -472,6 +472,10 @@ public class ExceptionsModel : PageModel
 
     private static string? GetString(JsonElement element, params string[] names)
     {
+        // A default(JsonElement) (e.g. from FirstOrDefault() finding no match) has ValueKind Undefined;
+        // calling TryGetProperty on it throws InvalidOperationException instead of returning false.
+        if (element.ValueKind != JsonValueKind.Object) return null;
+
         foreach (var name in names)
         {
             if (element.TryGetProperty(name, out var prop))

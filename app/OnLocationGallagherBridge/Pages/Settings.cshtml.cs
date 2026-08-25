@@ -7,6 +7,8 @@ using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
 using OnLocationGallagherBridge.Services;
 using Serilog;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace OnLocationGallagherBridge.Pages;
 
@@ -16,6 +18,7 @@ public class SettingsModel : PageModel
     private readonly IOnLocationConnector _onLocation;
     private readonly IGallagherConnector _gallagher;
     private readonly IConfigurationStatusService _statusService;
+    private readonly LoggingLevelSwitch _levelSwitch;
 
     [BindProperty, Microsoft.AspNetCore.Mvc.ModelBinding.Validation.ValidateNever]
     public BridgeConfig Config { get; set; } = new();
@@ -26,12 +29,13 @@ public class SettingsModel : PageModel
     public string? Message { get; set; }
     public ConfigurationStatus ConnectorStatus { get; set; }
 
-    public SettingsModel(ConfigService config, IOnLocationConnector onLocation, IGallagherConnector gallagher, IConfigurationStatusService statusService)
+    public SettingsModel(ConfigService config, IOnLocationConnector onLocation, IGallagherConnector gallagher, IConfigurationStatusService statusService, LoggingLevelSwitch levelSwitch)
     {
         _config = config;
         _onLocation = onLocation;
         _gallagher = gallagher;
         _statusService = statusService;
+        _levelSwitch = levelSwitch;
     }
 
     public async Task OnGetAsync(CancellationToken ct)
@@ -58,6 +62,10 @@ public class SettingsModel : PageModel
 
         var current = _config.GetConfig();
         Config.WebHost.Auth = current.WebHost.Auth;
+        // Notifications are edited on a separate page and are not part of this form; preserve them
+        // so saving Network Settings doesn't silently reset SMTP/notification configuration.
+        Config.Notifications = current.Notifications;
+        Config.Smtp = current.Smtp;
 
         if (Config.WebHost.Https.CertificateSource == "Pfx" && CertificateFile is { Length: > 0 })
         {
@@ -68,6 +76,13 @@ public class SettingsModel : PageModel
             await CertificateFile.CopyToAsync(stream);
             Config.WebHost.Https.CertificatePath = uploadPath;
         }
+
+        // Only "Information" and "Debug" are exposed in the UI; guard against unexpected values.
+        if (!Enum.TryParse<LogEventLevel>(Config.Logging.MinimumLevel, ignoreCase: true, out var parsedLevel))
+        {
+            parsedLevel = LogEventLevel.Information;
+        }
+        Config.Logging.MinimumLevel = parsedLevel.ToString();
 
         // Push the pending settings into memory so the live connectors use them during the test.
         _config.SetConfig(Config);
@@ -80,6 +95,9 @@ public class SettingsModel : PageModel
 
         // Persist the settings even if a test fails.
         await _config.SaveAsync(Config);
+
+        // Apply the new log level immediately; no service restart required.
+        _levelSwitch.MinimumLevel = parsedLevel;
 
         var parts = new List<string> { "Settings saved." };
         if (olOk && gallOk)
@@ -103,6 +121,9 @@ public class SettingsModel : PageModel
         LogModelStateErrors();
         var current = _config.GetConfig();
         Config.WebHost.Auth = current.WebHost.Auth;
+        Config.Notifications = current.Notifications;
+        Config.Smtp = current.Smtp;
+        Config.Logging = current.Logging;
         _config.SetConfig(Config);
         var ok = await _onLocation.TestConnectionAsync();
         if (ok)
@@ -121,6 +142,9 @@ public class SettingsModel : PageModel
         LogModelStateErrors();
         var current = _config.GetConfig();
         Config.WebHost.Auth = current.WebHost.Auth;
+        Config.Notifications = current.Notifications;
+        Config.Smtp = current.Smtp;
+        Config.Logging = current.Logging;
         _config.SetConfig(Config);
         var ok = await _gallagher.TestConnectionAsync();
         if (ok)

@@ -44,7 +44,8 @@ public class LoginModel : PageModel
         AuthEnabled = _config.GetConfig().WebHost.Auth.Enabled;
         if (!AuthEnabled) return RedirectToPage("/Index");
 
-        if (_auth.ValidateCredentials(Username, Password, out var user) && user is not null)
+        var result = _auth.AttemptLogin(Username, Password, out var user, out var lockoutRemaining);
+        if (result == LoginResult.Success && user is not null)
         {
             var identity = _auth.CreateClaimsIdentity(user);
             var principal = new ClaimsPrincipal(identity);
@@ -56,7 +57,12 @@ public class LoginModel : PageModel
             return RedirectToLocal(returnUrl);
         }
 
-        ErrorMessage = "Invalid username or password.";
+        ErrorMessage = result switch
+        {
+            LoginResult.LockedOut => $"Too many failed attempts. Try again in {Math.Max(1, (int)Math.Ceiling((lockoutRemaining ?? TimeSpan.Zero).TotalMinutes))} minute(s).",
+            LoginResult.AccountDisabled => "This account has been disabled. Contact an administrator.",
+            _ => "Invalid username or password."
+        };
         ReturnUrl = returnUrl;
         return Page();
     }

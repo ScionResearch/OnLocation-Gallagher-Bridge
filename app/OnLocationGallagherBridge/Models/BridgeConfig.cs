@@ -74,6 +74,8 @@ public class AuthConfig
     public bool PasswordRequireLowercase { get; set; } = true;
     public bool PasswordRequireDigit { get; set; } = true;
     public bool PasswordRequireNonAlphanumeric { get; set; } = true;
+    public int MaxFailedLoginAttempts { get; set; } = 5;
+    public int LockoutDurationMinutes { get; set; } = 15;
 
     [BindNever]
     public List<WebUser> Users { get; set; } = new();
@@ -86,6 +88,8 @@ public class WebUser
     public bool IsEnabled { get; set; } = true;
     public bool IsAdmin { get; set; }
     public bool RequirePasswordChange { get; set; } = true;
+    public int FailedLoginAttempts { get; set; }
+    public DateTimeOffset? LockoutEndUtc { get; set; }
 }
 
 public class LoggingConfig

@@ -3,16 +3,26 @@ using OnLocationGallagherBridge.Models;
 
 namespace OnLocationGallagherBridge.Services;
 
+public enum LoginResult
+{
+    Success,
+    InvalidCredentials,
+    AccountDisabled,
+    LockedOut
+}
+
 public interface IWebAuthService
 {
     WebUser? FindUser(string username);
     bool ValidateCredentials(string username, string password, out WebUser? user);
+    LoginResult AttemptLogin(string username, string password, out WebUser? user, out TimeSpan? lockoutRemaining);
     void SetPassword(WebUser user, string password);
     bool ValidatePassword(string password, AuthConfig rules, out string error);
     List<WebUser> GetUsers();
     bool AddUser(string username, string password, bool isAdmin, out string error);
     bool DeleteUser(string username, out string error);
     bool ToggleUserEnabled(string username, bool enabled, out string error);
+    bool UnlockUser(string username, out string error);
     bool SetUserAdmin(string username, bool isAdmin, out string error);
     ClaimsIdentity CreateClaimsIdentity(WebUser user);
 }
@@ -38,10 +48,58 @@ public class WebAuthService : IWebAuthService
     public bool ValidateCredentials(string username, string password, out WebUser? user)
     {
         user = FindUser(username);
-        if (user is null || !user.IsEnabled || string.IsNullOrWhiteSpace(user.PasswordHash))
+        if (user is null || !user.IsEnabled || string.IsNullOrWhiteSpace(user.PasswordHash) || string.IsNullOrEmpty(password))
             return false;
 
         return BCrypt.Net.BCrypt.Verify(password, user.PasswordHash);
+    }
+
+    // Used only by the unauthenticated Login page. ChangePassword's "confirm current password" check keeps
+    // using ValidateCredentials directly since that already requires an active, authenticated session.
+    public LoginResult AttemptLogin(string username, string password, out WebUser? user, out TimeSpan? lockoutRemaining)
+    {
+        lockoutRemaining = null;
+        var cfg = _config.GetConfig();
+        user = FindUser(username);
+        if (user is null)
+            return LoginResult.InvalidCredentials;
+
+        if (!user.IsEnabled)
+            return LoginResult.AccountDisabled;
+
+        if (user.LockoutEndUtc is { } lockoutEnd && lockoutEnd > DateTimeOffset.UtcNow)
+        {
+            lockoutRemaining = lockoutEnd - DateTimeOffset.UtcNow;
+            return LoginResult.LockedOut;
+        }
+
+        if (!string.IsNullOrEmpty(password) && !string.IsNullOrWhiteSpace(user.PasswordHash) && BCrypt.Net.BCrypt.Verify(password, user.PasswordHash))
+        {
+            if (user.FailedLoginAttempts != 0 || user.LockoutEndUtc != null)
+            {
+                user.FailedLoginAttempts = 0;
+                user.LockoutEndUtc = null;
+                _config.SaveAsync(cfg).GetAwaiter().GetResult();
+            }
+            return LoginResult.Success;
+        }
+
+        user.FailedLoginAttempts++;
+        var maxAttempts = Math.Max(1, cfg.WebHost.Auth.MaxFailedLoginAttempts);
+        if (user.FailedLoginAttempts >= maxAttempts)
+        {
+            var duration = TimeSpan.FromMinutes(Math.Max(1, cfg.WebHost.Auth.LockoutDurationMinutes));
+            user.LockoutEndUtc = DateTimeOffset.UtcNow.Add(duration);
+            user.FailedLoginAttempts = 0;
+            _config.SaveAsync(cfg).GetAwaiter().GetResult();
+            lockoutRemaining = duration;
+            user = null;
+            return LoginResult.LockedOut;
+        }
+
+        _config.SaveAsync(cfg).GetAwaiter().GetResult();
+        user = null;
+        return LoginResult.InvalidCredentials;
     }
 
     public void SetPassword(WebUser user, string password)
@@ -159,6 +217,23 @@ public class WebAuthService : IWebAuthService
         }
 
         user.IsEnabled = enabled;
+        error = string.Empty;
+        return true;
+    }
+
+    public bool UnlockUser(string username, out string error)
+    {
+        var cfg = _config.GetConfig();
+        var user = cfg.WebHost.Auth.Users.FirstOrDefault(u =>
+            string.Equals(u.Username, username, StringComparison.OrdinalIgnoreCase));
+        if (user is null)
+        {
+            error = "User not found.";
+            return false;
+        }
+
+        user.FailedLoginAttempts = 0;
+        user.LockoutEndUtc = null;
         error = string.Empty;
         return true;
     }

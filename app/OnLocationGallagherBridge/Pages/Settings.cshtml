@@ -139,6 +139,26 @@
         </div>
     </div>
 
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header">
+            <h5 class="mb-0">Logging</h5>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <label class="form-label">Log level</label>
+                <select class="form-select" asp-for="Config.Logging.MinimumLevel">
+                    <option value="Information">Information (recommended)</option>
+                    <option value="Debug">Debug (troubleshooting only)</option>
+                </select>
+                <div class="form-text">
+                    Debug logging writes full request/response details to the log file&mdash;including staff names,
+                    email addresses, employment status, and location&mdash;for every sync. Only enable it temporarily
+                    while diagnosing an issue, then switch back to Information.
+                </div>
+            </div>
+        </div>
+    </div>
+
 </form>
 
 @section Scripts

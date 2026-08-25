@@ -89,6 +89,17 @@ public class UsersModel : PageModel
         return RedirectToPage(new { Message = $"User '{username}' enabled state updated." });
     }
 
+    public async Task<IActionResult> OnPostUnlockAsync(string username)
+    {
+        if (!_auth.UnlockUser(username, out var error))
+        {
+            return RedirectToPage(new { Message = error });
+        }
+
+        await _config.SaveAsync();
+        return RedirectToPage(new { Message = $"User '{username}' unlocked." });
+    }
+
     public async Task<IActionResult> OnPostToggleAdminAsync(string username)
     {
         var user = _auth.FindUser(username);

@@ -31,6 +31,14 @@
                     <label class="form-label">Minimum Password Length</label>
                     <input class="form-control" type="number" asp-for="Auth.PasswordMinimumLength" min="1" />
                 </div>
+                <div class="col-md-3">
+                    <label class="form-label" asp-for="Auth.MaxFailedLoginAttempts">Failed Attempts Before Lockout</label>
+                    <input class="form-control" type="number" asp-for="Auth.MaxFailedLoginAttempts" min="1" />
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" asp-for="Auth.LockoutDurationMinutes">Lockout Duration (minutes)</label>
+                    <input class="form-control" type="number" asp-for="Auth.LockoutDurationMinutes" min="1" />
+                </div>
             </div>
             <div class="row mt-3">
                 <div class="col-md-3">
@@ -102,6 +110,7 @@
                     <th>Enabled</th>
                     <th>Admin</th>
                     <th>Must Change Password</th>
+                    <th>Locked</th>
                     <th class="text-end">Actions</th>
                 </tr>
             </thead>
@@ -127,6 +136,19 @@
                             </form>
                         </td>
                         <td>@(user.RequirePasswordChange ? "Yes" : "No")</td>
+                        <td>
+                            @if (user.LockoutEndUtc is { } lockoutEnd && lockoutEnd > DateTimeOffset.UtcNow)
+                            {
+                                <form method="post" asp-page-handler="Unlock" class="d-inline">
+                                    <input type="hidden" name="username" value="@user.Username" />
+                                    <button type="submit" class="btn btn-sm btn-warning" title="@("Locked until " + lockoutEnd.ToLocalTime().ToString("g"))">Unlock</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <span class="text-muted">No</span>
+                            }
+                        </td>
                         <td class="text-end">
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#resetModal" data-username="@user.Username">Reset Password</button>
                             <form method="post" asp-page-handler="Delete" class="d-inline" onsubmit="return confirm('Delete this user?');">

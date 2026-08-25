@@ -18,6 +18,7 @@ A Windows service that synchronises people and induction data from **MRI OnLocat
 - [Logging and Diagnostics](#logging-and-diagnostics)
 - [Tray Status Widget](#tray-status-widget)
 - [Web UI](#web-ui)
+- [Authentication and Access Control](#authentication-and-access-control)
 - [Configuration](#configuration)
 - [Data Locations](#data-locations)
 - [Build and Deploy](#build-and-deploy)
@@ -337,9 +338,11 @@ Expiry dates are converted to Gallagher's expected format: end-of-day in the New
 **Serilog** writes to two sinks:
 
 - **Console** — `Information` level and above (useful when running interactively).
-- **Rolling file** — `Debug` level and above, daily rotation, 30-day retention, at `%ProgramData%\OnLocation-Gallagher-Bridge\logs\bridge-YYYYMMDD.log`.
+- **Rolling file** — daily rotation, 30-day retention by default, at `%ProgramData%\OnLocation-Gallagher-Bridge\logs\bridge-YYYYMMDD.log`.
 
-Both connectors log every HTTP request and response with method, URL, status code, elapsed milliseconds, and byte count. Request and response bodies are logged at `Debug` level.
+Both connectors log every HTTP request and response with method, URL, status code, elapsed milliseconds, and byte count at `Information` level. Full request/response bodies — which include staff names, email addresses, employment status, and location — are only logged when the **Debug** log level is enabled.
+
+The log level defaults to **Information**, so personal data never reaches the log file out of the box. It can be switched to **Debug** from **Network Settings → Logging** for troubleshooting; the change takes effect immediately without a service restart. Switch back to Information once you're done, since Debug logging writes full staff details to disk for the full retention period.
 
 The sync engine logs when each profile runs, how many records were fetched, and when profiles are skipped (disabled, not due, or pending initial match). When nothing is due, a `Debug` message explains why.
 
@@ -378,8 +381,31 @@ The web UI is served at the configured URL (default `https://*:5000`) and provid
 | **Manual Sync** (`/ManualSync`) | Trigger an immediate sync of one or all profiles outside the normal schedule. Reports progress to the same live activity indicator. |
 | **Exceptions** (`/Exceptions`) | View failed sync jobs grouped by error, with retry, rematch, and dismiss actions. |
 | **Audit** (`/Audit`) | Filterable audit log with outcome/action badges, source display names, durations, and expandable JSON detail. |
+| **Users** (`/Users`, admin only) | Manage local web login accounts, password policy, lockout settings, and admin-initiated password resets. |
 
 The dashboard's live activity card polls a JSON endpoint every 2 seconds and auto-refreshes the page when a run completes.
+
+---
+
+## Authentication and Access Control
+
+Web UI login (when **Users → Require login** is enabled) is protected by:
+
+- **Account lockout** — after a configurable number of consecutive failed attempts (default 5), the account is locked for a configurable duration (default 15 minutes). Both are set on the **Users** page. An admin can also unlock an account immediately from the same page.
+- **Session re-validation** — every request re-checks that the user still exists and is enabled, so disabling or deleting an account (or a service restart) invalidates active sessions immediately rather than waiting for the session to expire.
+- **Admin-initiated reset** — an admin can set a new password for any user from the **Users** page; the user must change it on next login.
+
+### Break-glass recovery (locked out / forgotten password, no working admin account)
+
+If every admin account is locked out or its password is forgotten, run the following directly on the server, with console or RDP access (this is not exposed over the web), from an **elevated** command prompt (right-click Command Prompt → *Run as administrator*):
+
+```powershell
+net stop OnLocationGallagherBridge
+"C:\Program Files\OnLocation-Gallagher Bridge\OnLocationGallagherBridge.exe" --reset-password <username>
+net start OnLocationGallagherBridge
+```
+
+This generates a new random password meeting the configured complexity rules, prints it to the console, clears any lockout, and forces a password change on next login. **Stop the Windows Service first** — the config file has no cross-process locking, so resetting while the service is running risks the service's next save overwriting the change. **The prompt must be elevated** — the config file lives under `%ProgramData%`, which the service (running as SYSTEM) can always write to, but a non-elevated prompt runs with a filtered admin token that can read the file but not write it, even for a local administrator. Running with no username, or an unknown one, lists the available local users instead of making any change.
 
 ---
 

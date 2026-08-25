@@ -1,5 +1,38 @@
 # OnLocation-Gallagher Bridge Release Notes
 
+## v1.1.0.0 — 25 August 2026
+
+Security and reliability hardening release, based on feedback from a security review of v1.0.0.0.
+
+### Fixed
+
+- **Personal data no longer written to the log file at the default log level.** Full request/response bodies (staff names, emails, employment status, location) are now only logged at `Debug`, including a leftover `Information`-level log of the full cardholder response body on the Exceptions page that bypassed the intended `Information`/`Debug` split.
+- **Web sessions are now invalidated immediately** when a user is disabled or deleted, or when the service restarts — previously a signed-in session remained valid until the cookie expired regardless of account state.
+- **Exceptions page no longer crashes** when a previously suggested Gallagher cardholder match no longer exists (e.g. deleted in Command Centre); it now shows "Unknown cardholder" instead of a 500 error.
+- **Empty password on login no longer crashes the app** (`BCrypt.Verify` throws on an empty, not just null, input — both the login and change-password checks now guard against this).
+
+### Added
+
+- **Account lockout** — configurable failed-login threshold and lockout duration (Users page), with immediate admin unlock.
+- **Break-glass password recovery** — `OnLocationGallagherBridge.exe --reset-password <username>`, run locally on the server (elevated prompt, service stopped), for when every admin is locked out or has forgotten their password. Generates a random password meeting the configured complexity rules; no SMTP or web-facing attack surface required.
+- **Runtime log level control** — switch between `Information` and `Debug` from **Connector Settings → Logging** without restarting the service, for temporary troubleshooting.
+
+### Asset
+
+- `OnLocationGallagherBridge-v1.1.0.0.msi` — per-machine installer.
+
+### Install / Upgrade
+
+```powershell
+msiexec /i "OnLocationGallagherBridge-v1.1.0.0.msi" /qn /norestart
+```
+
+The installer performs an in-place major upgrade over any existing v1.0.x install; existing configuration, database, and users are preserved.
+
+See [README.md](README.md) for details, including the new [Authentication and Access Control](README.md#authentication-and-access-control) section.
+
+---
+
 ## v1.0.0.0 — 4 August 2026
 
 Initial stable release for testing of the OnLocation-Gallagher Bridge.
