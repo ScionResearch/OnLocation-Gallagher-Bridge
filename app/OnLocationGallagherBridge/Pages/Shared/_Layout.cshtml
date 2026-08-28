@@ -2,10 +2,17 @@
 @using System.Reflection
 @{
     var appAssembly = typeof(OnLocationGallagherBridge.Services.ConfigService).Assembly;
-    var appVersion = appAssembly
+    var rawVersion = appAssembly
         .GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version
         ?? appAssembly.GetName().Version?.ToString()
         ?? "dev";
+    var appVersion = rawVersion;
+    if (Version.TryParse(rawVersion, out var v))
+    {
+        appVersion = $"{v.Major}.{v.Minor}";
+        if (v.Build >= 0) appVersion += $".{v.Build}";
+        if (v.Revision > 0) appVersion += $".{v.Revision}";
+    }
 }
 <!DOCTYPE html>
 <html lang="en">
