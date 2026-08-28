@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using System.Collections.Generic;
+using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using OnLocationGallagherBridge.Data;
 using OnLocationGallagherBridge.Models;
@@ -27,6 +28,7 @@ public class SettingsModel : PageModel
     public IFormFile? CertificateFile { get; set; }
 
     public string? Message { get; set; }
+    public bool Restarting { get; set; }
     public ConfigurationStatus ConnectorStatus { get; set; }
 
     public SettingsModel(ConfigService config, IOnLocationConnector onLocation, IGallagherConnector gallagher, IConfigurationStatusService statusService, LoggingLevelSwitch levelSwitch)
@@ -60,12 +62,12 @@ public class SettingsModel : PageModel
     {
         LogModelStateErrors();
 
-        var current = _config.GetConfig();
-        Config.WebHost.Auth = current.WebHost.Auth;
+        var previous = _config.GetConfig();
         // Notifications are edited on a separate page and are not part of this form; preserve them
         // so saving Network Settings doesn't silently reset SMTP/notification configuration.
-        Config.Notifications = current.Notifications;
-        Config.Smtp = current.Smtp;
+        Config.WebHost.Auth = previous.WebHost.Auth;
+        Config.Notifications = previous.Notifications;
+        Config.Smtp = previous.Smtp;
 
         if (Config.WebHost.Https.CertificateSource == "Pfx" && CertificateFile is { Length: > 0 })
         {
@@ -113,7 +115,50 @@ public class SettingsModel : PageModel
         }
 
         Message = string.Join(" ", parts);
+
+        if (WebHostSettingsChanged(previous.WebHost, Config.WebHost))
+        {
+            Restarting = true;
+            RestartService();
+            var scheme = Config.WebHost.Https.Enabled ? "https" : "http";
+            var newUrl = $"{scheme}://{Request.Host.Host}:{Config.WebHost.Port}";
+            Message = $"Settings saved. The web port or security settings changed; the service is restarting now. The UI will be available at {newUrl} shortly.";
+        }
+
         return Page();
+    }
+
+    private static bool WebHostSettingsChanged(WebHostConfig previous, WebHostConfig current)
+    {
+        if (previous.Port != current.Port) return true;
+        if (previous.Https.Enabled != current.Https.Enabled) return true;
+        if (!string.Equals(previous.Https.CertificateSource, current.Https.CertificateSource, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(previous.Https.CertificateThumbprint, current.Https.CertificateThumbprint, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(previous.Https.CertificatePath, current.Https.CertificatePath, StringComparison.OrdinalIgnoreCase)) return true;
+        if (!string.Equals(previous.Https.CertificatePassword, current.Https.CertificatePassword, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private void RestartService()
+    {
+        const string serviceName = "OnLocationGallagherBridge";
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c \"ping -n 4 127.0.0.1 > nul && net stop {serviceName} && net start {serviceName}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = new Process { StartInfo = startInfo };
+            process.Start();
+            Log.Information("Service restart triggered for {ServiceName}", serviceName);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to trigger automatic service restart for {ServiceName}", serviceName);
+        }
     }
 
     public async Task<IActionResult> OnPostTestOnLocationAsync()

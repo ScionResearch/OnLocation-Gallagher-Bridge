@@ -642,8 +642,7 @@
             startRemoteLoad();
         }
 
-        form.addEventListener('submit', event => {
-            if (event.submitter !== loadButton) return;
+        loadButton.addEventListener('click', event => {
             event.preventDefault();
             if (!requestId.value) requestId.value = window.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
             startRemoteLoad();

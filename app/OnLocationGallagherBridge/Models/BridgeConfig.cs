@@ -48,8 +48,10 @@ public class SmtpConfig
 
 public class WebHostConfig
 {
+    // Legacy only: was used to migrate pre-1.0 URL configuration to Port/Https.Enabled.
+    // Left at null so it is not re-written and does not re-apply the legacy migration on every load.
     [BindNever]
-    public string? Urls { get; set; } = "https://*:5000";
+    public string? Urls { get; set; }
 
     public int Port { get; set; } = 5000;
     public HttpsConfig Https { get; set; } = new();

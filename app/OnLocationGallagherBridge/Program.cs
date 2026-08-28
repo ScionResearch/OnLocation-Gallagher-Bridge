@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
@@ -75,24 +76,45 @@ builder.Host.UseWindowsService(options =>
 
 builder.Host.UseSerilog();
 
-var webHostConfig = configService.GetConfig().WebHost;
-var scheme = webHostConfig.Https.Enabled ? "https" : "http";
+// Validate HTTPS configuration before Kestrel tries to bind. If HTTPS is enabled but we cannot
+// load a usable certificate, revert the WebHost configuration to the safe defaults (HTTP on port 5000)
+// so the UI remains accessible and the admin can fix the certificate from the Settings page.
+var appConfig = configService.GetConfig();
+var webHostConfig = appConfig.WebHost;
+var httpsEnabled = webHostConfig.Https.Enabled;
+X509Certificate2? httpsCert = null;
+
+if (httpsEnabled)
+{
+    httpsCert = CertificateLoader.Load(webHostConfig.Https, dataDir, configService, Log.Logger);
+    if (httpsCert is null)
+    {
+        Log.Logger.Error("HTTPS is enabled but the configured certificate could not be loaded. Switching to an auto-generated certificate.");
+        webHostConfig.Https.CertificateSource = "Auto";
+        webHostConfig.Https.CertificateThumbprint = null;
+        webHostConfig.Https.CertificatePath = null;
+
+        httpsCert = CertificateLoader.Load(webHostConfig.Https, dataDir, configService, Log.Logger);
+        if (httpsCert is null)
+        {
+            Log.Logger.Error("Auto-generated certificate could not be loaded. Reverting to HTTP on default port 5000.");
+            webHostConfig.Https.Enabled = false;
+            webHostConfig.Port = 5000;
+            configService.SaveAsync(appConfig).GetAwaiter().GetResult();
+            httpsEnabled = false;
+        }
+    }
+}
+
+var scheme = httpsEnabled ? "https" : "http";
 var listenUrl = $"{scheme}://*:{webHostConfig.Port}";
 builder.WebHost.UseUrls(listenUrl);
 
 builder.WebHost.ConfigureKestrel((context, options) =>
 {
-    if (webHostConfig.Https.Enabled)
+    if (httpsEnabled && httpsCert is not null)
     {
-        var cert = CertificateLoader.Load(webHostConfig.Https, dataDir, configService, Log.Logger);
-        if (cert is not null)
-        {
-            options.ConfigureHttpsDefaults(listenOptions => listenOptions.ServerCertificate = cert);
-        }
-        else
-        {
-            Log.Logger.Error("HTTPS is enabled but no certificate could be loaded. The service may fail to bind to HTTPS endpoints.");
-        }
+        options.ConfigureHttpsDefaults(listenOptions => listenOptions.ServerCertificate = httpsCert);
     }
 });
 
@@ -150,7 +172,9 @@ if (authEnabled)
             options.Cookie.Name = "OnLocationGallagherBridge.Auth";
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            // When HTTPS is off the cookie must not be marked Secure, otherwise browsers on remote hosts
+            // (unlike localhost/127.0.0.1) will refuse to send it over plain HTTP.
+            options.Cookie.SecurePolicy = webHostConfig.Https.Enabled ? CookieSecurePolicy.Always : CookieSecurePolicy.None;
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromMinutes(webHostConfig.Auth.SessionTimeoutMinutes);
             options.Events.OnValidatePrincipal = async context =>

@@ -11,7 +11,7 @@
 
 @if (Model.Message != null)
 {
-    <div class="alert alert-info">@Model.Message</div>
+    <div class="alert @(Model.Restarting ? "alert-warning" : "alert-info")">@Model.Message</div>
 }
 
 <partial name="_StatusBanner" model='new StatusBannerModel("Network Settings", Model.ConnectorStatus)' />
@@ -101,7 +101,7 @@
                 <div class="col-md-4">
                     <label class="form-label" asp-for="Config.WebHost.Port"></label>
                     <input class="form-control" type="number" asp-for="Config.WebHost.Port" min="1" max="65535" />
-                    <div class="form-text">A service restart is required after changing the port.</div>
+                    <div class="form-text">Changing the port or HTTPS settings will trigger an automatic service restart when you save.</div>
                 </div>
                 <div class="col-md-8 mb-md-0 mb-3">
                     <div class="form-check">
