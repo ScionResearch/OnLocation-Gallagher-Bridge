@@ -58,8 +58,8 @@ public class AlertService : IAlertService
             message.Body = new TextPart("plain") { Text = body };
 
             using var client = new SmtpClient();
-            await client.ConnectAsync(smtp.Host, smtp.Port, smtp.EnableSsl ? MailKit.Security.SecureSocketOptions.StartTlsWhenAvailable : MailKit.Security.SecureSocketOptions.Auto, ct);
-            if (!string.IsNullOrEmpty(smtp.Username))
+            await client.ConnectAsync(smtp.Host, smtp.Port, smtp.EnableSsl ? MailKit.Security.SecureSocketOptions.StartTlsWhenAvailable : MailKit.Security.SecureSocketOptions.None, ct);
+            if (!string.IsNullOrWhiteSpace(smtp.Username))
                 await client.AuthenticateAsync(smtp.Username, smtp.Password ?? string.Empty, ct);
             await client.SendAsync(message, ct);
             await client.DisconnectAsync(true, ct);
