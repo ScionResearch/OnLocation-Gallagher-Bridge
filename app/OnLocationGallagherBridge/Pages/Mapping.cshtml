@@ -23,12 +23,7 @@
     @Html.AntiForgeryToken()
     <div class="mb-3">
         <label class="form-label">Record Group</label>
-        <select class="form-select" name="SelectedProfileId" id="SelectedProfileId" asp-items="Model.ProfileOptions">
-            @foreach (var option in Model.ProfileOptions)
-            {
-                <!option value="@option.Value" selected="@option.Selected">@option.Text</!option>
-            }
-        </select>
+        <select class="form-select" name="SelectedProfileId" id="SelectedProfileId" asp-items="Model.ProfileOptions"></select>
     </div>
     <input type="hidden" asp-for="LoadRequestId" id="loadRequestId" value="@Model.LoadRequestId" />
     <button type="submit" class="btn btn-secondary" formaction="/Mapping?handler=Load" id="loadFieldsButton" @(Model.AutoLoad ? "disabled" : "")>Refresh Remote Fields</button>
@@ -97,6 +92,15 @@
             <option value="Ignore">Ignore</option>
         </select>
         <div class="form-text">What the bridge should do when a synced OnLocation record has no matching Gallagher cardholder.</div>
+    </div>
+    <div class="col-md-6 mb-3">
+        <label class="form-label" asp-for="DefaultAuthorised">Authorised</label>
+        <select class="form-select" asp-for="DefaultAuthorised">
+            <option value="">None (use a field map / rule instead)</option>
+            <option value="true">True</option>
+            <option value="false">False</option>
+        </select>
+        <div class="form-text">Applied only when the bridge creates a cardholder. If a field map already targets Authorised, that mapping takes precedence.</div>
     </div>
 </div>
 @if (!Model.DivisionOptions.Any())
@@ -578,6 +582,15 @@
         const progressBar = document.getElementById('loadFieldsProgressBar');
         const spinner = document.getElementById('loadFieldsSpinner');
         const complete = document.getElementById('loadFieldsComplete');
+        const profileSelect = document.getElementById('SelectedProfileId');
+        const initialProfileId = profileSelect.value;
+        profileSelect.addEventListener('change', () => {
+            if (!confirm('Switching record group will discard any unsaved changes on this page. Continue?')) {
+                profileSelect.value = initialProfileId;
+                return;
+            }
+            window.location.href = `/Mapping?SelectedProfileId=${encodeURIComponent(profileSelect.value)}`;
+        });
         const setStage = loadStatus => {
             const isComplete = loadStatus.step === 4;
             spinner.classList.toggle('d-none', isComplete);
@@ -614,6 +627,7 @@
             const formData = new FormData(form);
             formData.set('handler', 'Load');
             formData.set('LoadRequestId', requestId.value);
+            formData.set('SelectedProfileId', profileSelect.value);
             const timer = window.setInterval(pollStatus, 750);
             pollStatus();
             try {
@@ -622,7 +636,8 @@
                 const final = await response.json();
                 if (final) setStage(final);
                 if (final && final.isSuccess !== false) {
-                    window.location.reload();
+                    const selectedProfileId = document.getElementById('SelectedProfileId')?.value ?? '';
+                    window.location.href = `/Mapping?SelectedProfileId=${encodeURIComponent(selectedProfileId)}`;
                 }
             } catch (err) {
                 spinner.classList.add('d-none');

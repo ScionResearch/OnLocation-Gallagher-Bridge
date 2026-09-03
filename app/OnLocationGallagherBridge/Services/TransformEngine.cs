@@ -75,6 +75,9 @@ public class TransformEngine : ITransformEngine
         if (accessGroups.Count > 0 && !payload.ContainsKey("accessGroups"))
             payload["accessGroups"] = accessGroups;
 
+        if (!payload.ContainsKey("authorised") && profile.DefaultAuthorised.HasValue)
+            payload["authorised"] = profile.DefaultAuthorised.Value;
+
         return payload;
     }
 

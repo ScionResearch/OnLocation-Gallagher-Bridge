@@ -42,6 +42,10 @@ public class SyncProfile
     public string DefaultAccessGroupsJson { get; set; } = "[]";
     public bool AutoCreate { get; set; } = false;
     public UnmatchedAction DefaultUnmatchedAction { get; set; } = UnmatchedAction.ManualReview;
+    // Default for the Gallagher "authorised" field on new cardholders. Null leaves it to a rule-based
+    // field map (the original behaviour); true/false applies unconditionally on create, unless a field
+    // map already targets "authorised" for this record.
+    public bool? DefaultAuthorised { get; set; }
     public bool InitialMatchCompleted { get; set; } = false;
     public DateTimeOffset? InitialMatchCompletedAt { get; set; }
     public DateTimeOffset? LastRun { get; set; }

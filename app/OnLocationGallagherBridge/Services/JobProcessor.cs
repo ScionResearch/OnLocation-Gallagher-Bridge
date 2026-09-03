@@ -158,6 +158,14 @@ public class JobProcessor : IJobProcessor
                         DurationMs = (int)stopwatch.ElapsedMilliseconds
                     });
                     _logger.Warning("Profile {Profile} source {Source} ({Display}) had a stale link to {Href}", profile.Id, entityId, display, before);
+                    try
+                    {
+                        await _notifications.RaiseEventAsync(NotificationEventType.AwaitingUserInput, $"Record {entityId} ({display}) in profile {profile.Id} lost its link to Command Centre and is waiting for manual review.", ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "Failed to raise awaiting-user-input notification for stale link");
+                    }
                     return new JobProcessResult("StaleLink", "Failed", true, true);
                 }
 

@@ -87,6 +87,10 @@ public class MappingModel : PageModel
     [BindProperty]
     public List<string> DefaultAccessGroupHrefs { get; set; } = new();
 
+    // Tri-state: "" = none (leave to a rule-based field map), "true"/"false" = fixed default on create.
+    [BindProperty]
+    public string DefaultAuthorised { get; set; } = string.Empty;
+
     public List<GallagherReference> SavedAccessGroups { get; set; } = new();
     public List<GallagherReference> DivisionOptions { get; set; } = new();
     public List<GallagherReference> AccessGroupOptions { get; set; } = new();
@@ -113,20 +117,28 @@ public class MappingModel : PageModel
 
     public bool AutoLoad { get; set; }
 
+    private const string LastProfileCookieName = "Mapping.LastSelectedProfileId";
+
     public async Task OnGetAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
         if (string.IsNullOrWhiteSpace(SelectedProfileId))
-            SelectedProfileId = ProfileOptions.FirstOrDefault()?.Value ?? string.Empty;
+        {
+            var lastUsed = Request.Cookies[LastProfileCookieName];
+            SelectedProfileId = ProfileOptions.Any(o => string.Equals(o.Value, lastUsed, StringComparison.OrdinalIgnoreCase))
+                ? lastUsed!
+                : ProfileOptions.FirstOrDefault()?.Value ?? string.Empty;
+        }
         _logger.LogInformation("Mapping GET: profiles={ProfileCount}, selected={SelectedProfileId}, hasProfile={HasProfile}", ProfileOptions.Count, SelectedProfileId, !string.IsNullOrWhiteSpace(SelectedProfileId));
         if (string.IsNullOrWhiteSpace(SelectedProfileId)) return;
 
+        RememberSelectedProfile();
         await LoadProfilesAsync(ct);
         var profile = await LoadProfileAsync();
         FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
 
-        var cacheKey = GetSampleCacheKey();
-        var cacheHit = _cache.TryGetValue(cacheKey, out MappingSampleCache? cached) && cached != null;
+        var cacheHit = _cache.TryGetValue(GetOnLocationSampleCacheKey(), out OnLocationSampleCache? onLocationCached) && onLocationCached != null
+            && _cache.TryGetValue(GallagherSampleCacheKey, out GallagherSampleCache? gallagherCached) && gallagherCached != null;
         if (!cacheHit)
         {
             AutoLoad = true;
@@ -146,6 +158,7 @@ public class MappingModel : PageModel
             SelectedProfileId = ProfileOptions.FirstOrDefault()?.Value ?? string.Empty;
         }
         _logger.LogInformation("Mapping POST Load: selected={SelectedProfileId}, requestId={LoadRequestId}", SelectedProfileId, LoadRequestId);
+        RememberSelectedProfile();
         await LoadProfilesAsync(ct);
         var profile = await LoadProfileAsync();
         FieldMappingStatus = _statusService.GetFieldMappingStatus(profile);
@@ -166,6 +179,7 @@ public class MappingModel : PageModel
     public async Task<IActionResult> OnPostSaveAsync(CancellationToken ct)
     {
         await LoadProfilesAsync(ct);
+        RememberSelectedProfile();
         var profile = await _db.SyncProfiles.FindAsync(SelectedProfileId);
         if (profile == null)
         {
@@ -297,6 +311,13 @@ public class MappingModel : PageModel
                 Name = NameFor(AccessGroupOptions, href) ?? NameFor(SavedAccessGroups, href) ?? href
             })
             .ToList());
+
+        profile.DefaultAuthorised = DefaultAuthorised switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null
+        };
     }
 
     private static string? NameFor(IEnumerable<GallagherReference> options, string href) => options
@@ -346,6 +367,7 @@ public class MappingModel : PageModel
                 DefaultAccessGroupHrefs = SavedAccessGroups.Select(g => g.Href).ToList();
                 BridgeMessageTarget = profile.BridgeMessageTarget ?? string.Empty;
                 DefaultUnmatchedAction = profile.DefaultUnmatchedAction.ToString();
+                DefaultAuthorised = profile.DefaultAuthorised.HasValue ? profile.DefaultAuthorised.Value.ToString().ToLowerInvariant() : string.Empty;
                 if (!string.IsNullOrWhiteSpace(profile.DefaultDivisionHref) && DivisionOptions.Count == 0)
                     DivisionOptions = new List<GallagherReference> { new() { Href = profile.DefaultDivisionHref, Name = string.IsNullOrWhiteSpace(profile.DefaultDivisionName) ? profile.DefaultDivisionHref : profile.DefaultDivisionName } };
             }
@@ -453,6 +475,13 @@ public class MappingModel : PageModel
                 SourceFields = records[0].EnumerateObject().Select(p => p.Name).Distinct().OrderBy(n => n).ToList();
                 SourceFieldExamples = records[0].EnumerateObject()
                     .ToDictionary(p => p.Name, p => GetValue(p.Value), StringComparer.OrdinalIgnoreCase);
+            }
+            else
+            {
+                var lastError = await _onLocation.GetLastErrorAsync();
+                Message = string.IsNullOrWhiteSpace(lastError)
+                    ? "OnLocation returned no records for this record group."
+                    : $"Could not load OnLocation sample: {lastError}";
             }
         }
         catch (Exception ex)
@@ -639,15 +668,19 @@ public class MappingModel : PageModel
         }
 
         var succeeded = string.IsNullOrWhiteSpace(Message);
-        SetLoadStatus(requestId, 4, succeeded ? "Field data loaded successfully" : "Field data load completed with errors", succeeded);
+        SetLoadStatus(requestId, 4, succeeded ? "Field data loaded successfully" : $"Field data load completed with errors: {Message}", succeeded);
         if (!string.IsNullOrWhiteSpace(requestId))
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
-        _cache.Set(GetSampleCacheKey(), new MappingSampleCache
+        _cache.Set(GetOnLocationSampleCacheKey(), new OnLocationSampleCache
         {
             SourceSample = SourceSample,
             SourceFields = SourceFields,
             SourceFieldExamples = SourceFieldExamples,
-            InductionFieldGroups = InductionFieldGroups,
+            InductionFieldGroups = InductionFieldGroups
+        }, TimeSpan.FromMinutes(30));
+
+        _cache.Set(GallagherSampleCacheKey, new GallagherSampleCache
+        {
             GallagherSample = GallagherSample,
             GallagherFields = GallagherFields,
             GallagherFieldExamples = GallagherFieldExamples,
@@ -663,21 +696,27 @@ public class MappingModel : PageModel
 
     private void LoadCachedSamples()
     {
-        if (!_cache.TryGetValue(GetSampleCacheKey(), out MappingSampleCache? cached) || cached == null) return;
-        SourceSample = cached.SourceSample;
-        SourceFields = cached.SourceFields;
-        SourceFieldExamples = cached.SourceFieldExamples;
-        InductionFieldGroups = cached.InductionFieldGroups;
-        GallagherSample = cached.GallagherSample;
-        GallagherFields = cached.GallagherFields;
-        GallagherFieldExamples = cached.GallagherFieldExamples;
-        GallagherPersonalDataFieldNames = cached.GallagherPersonalDataFieldNames;
-        GallagherPersonalDataFieldExamples = cached.GallagherPersonalDataFieldExamples;
-        GallagherCompetencyNames = cached.GallagherCompetencyNames;
-        GallagherCompetencyFields = cached.GallagherCompetencyFields;
-        GallagherCompetencyFieldExamples = cached.GallagherCompetencyFieldExamples;
-        DivisionOptions = cached.DivisionOptions;
-        AccessGroupOptions = cached.AccessGroupOptions;
+        if (_cache.TryGetValue(GetOnLocationSampleCacheKey(), out OnLocationSampleCache? onLocationCached) && onLocationCached != null)
+        {
+            SourceSample = onLocationCached.SourceSample;
+            SourceFields = onLocationCached.SourceFields;
+            SourceFieldExamples = onLocationCached.SourceFieldExamples;
+            InductionFieldGroups = onLocationCached.InductionFieldGroups;
+        }
+
+        if (_cache.TryGetValue(GallagherSampleCacheKey, out GallagherSampleCache? gallagherCached) && gallagherCached != null)
+        {
+            GallagherSample = gallagherCached.GallagherSample;
+            GallagherFields = gallagherCached.GallagherFields;
+            GallagherFieldExamples = gallagherCached.GallagherFieldExamples;
+            GallagherPersonalDataFieldNames = gallagherCached.GallagherPersonalDataFieldNames;
+            GallagherPersonalDataFieldExamples = gallagherCached.GallagherPersonalDataFieldExamples;
+            GallagherCompetencyNames = gallagherCached.GallagherCompetencyNames;
+            GallagherCompetencyFields = gallagherCached.GallagherCompetencyFields;
+            GallagherCompetencyFieldExamples = gallagherCached.GallagherCompetencyFieldExamples;
+            DivisionOptions = gallagherCached.DivisionOptions;
+            AccessGroupOptions = gallagherCached.AccessGroupOptions;
+        }
     }
 
     private static List<GallagherReference> ToReferences(IReadOnlyList<JsonElement> items) => items
@@ -690,7 +729,8 @@ public class MappingModel : PageModel
         .OrderBy(reference => reference.Name, StringComparer.OrdinalIgnoreCase)
         .ToList();
 
-    private string GetSampleCacheKey() => $"mapping-samples:{SelectedProfileId}";
+    private string GetOnLocationSampleCacheKey() => $"mapping-onlocation-samples:{SelectedProfileId}";
+    private const string GallagherSampleCacheKey = "mapping-gallagher-samples";
 
     private void SetLoadStatus(string? requestId, int step, string message, bool isSuccess = true)
     {
@@ -699,6 +739,17 @@ public class MappingModel : PageModel
     }
 
     private static string GetLoadStatusCacheKey(string requestId) => $"mapping-load-status:{requestId}";
+
+    private void RememberSelectedProfile()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedProfileId)) return;
+        Response.Cookies.Append(LastProfileCookieName, SelectedProfileId, new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Strict,
+            Expires = DateTimeOffset.UtcNow.AddYears(1)
+        });
+    }
 
     public bool IsPriorityProfileField(string field)
     {
@@ -826,12 +877,19 @@ public class MappingLoadStatus
     public bool IsSuccess { get; set; } = true;
 }
 
-public class MappingSampleCache
+// OnLocation data (the profile record and its induction fields) genuinely differs between record groups.
+public class OnLocationSampleCache
 {
     public string? SourceSample { get; set; }
     public List<string> SourceFields { get; set; } = new();
     public Dictionary<string, string?> SourceFieldExamples { get; set; } = new();
     public List<InductionFieldGroup> InductionFieldGroups { get; set; } = new();
+}
+
+// Gallagher data (cardholder fields, PDFs, competencies, divisions, access groups) is account-wide and
+// identical regardless of which OnLocation record group is selected, so it is cached once and shared.
+public class GallagherSampleCache
+{
     public string? GallagherSample { get; set; }
     public List<string> GallagherFields { get; set; } = new();
     public Dictionary<string, string?> GallagherFieldExamples { get; set; } = new();

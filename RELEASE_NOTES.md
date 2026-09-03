@@ -1,5 +1,40 @@
 # OnLocation-Gallagher Bridge Release Notes
 
+## v1.1.3.0 — 3 September 2026
+
+Field mapping and notification reliability fixes.
+
+### Fixed
+
+- **"Refresh Remote Fields" no longer looped endlessly and could load the wrong record group's data.** The auto-refresh request wasn't reliably carrying the selected record group (Staff/Contractors) to the server, so it silently fell back to the first profile — caching that profile's data under the selected profile's cache key and re-triggering the auto-load forever. The record group is now explicitly included in the request.
+- **OnLocation and Gallagher sample data no longer share one cache entry per record group.** Gallagher field/division/access-group data is account-wide and identical for every record group, but was being cached per-profile alongside the OnLocation sample; switching record groups could show stale or missing Gallagher fields. The two are now cached independently.
+- **A failed OnLocation fetch (e.g. missing API permissions) no longer reports "success" with no fields.** Field Mapping now surfaces the actual OnLocation error instead of silently leaving the field list empty and treating the load as successful.
+- **Scheduled notification groups no longer send early.** A rate-limit "drain" step in the notification flush loop was sending scheduled (e.g. weekly) groups on every 1-minute check regardless of their interval, defeating the schedule entirely.
+- **Records that lost their Gallagher link and were sent back for re-matching now raise a notification.** Previously only newly-unmatched records notified; records that fell out of sync because their linked cardholder was deleted in Command Centre were queued for manual review silently.
+- **Record group display names** no longer depend on a hardcoded, incomplete list of OnLocation entity type names; the record group ID is now shown directly.
+
+### Improved
+
+- **Notification digest emails consolidate repeated events per record.** The same record failing/waiting for review on every sync cycle previously produced one line per attempt (dozens of near-duplicate lines); repeats of the same event are now shown as a single line with a first/last-seen time range and occurrence count.
+
+### Added
+
+- **Default "Authorised" value for new cardholders** (Field Mapping page) — set a fixed true/false value applied when the bridge creates a cardholder, instead of always requiring a rule-based field map. An existing field map targeting Authorised still takes precedence.
+
+### Asset
+
+- `OnLocationGallagherBridge-v1.1.3.0.msi` — per-machine installer.
+
+### Install / Upgrade
+
+```powershell
+msiexec /i "OnLocationGallagherBridge-v1.1.3.0.msi" /qn /norestart
+```
+
+The installer performs an in-place upgrade over any existing v1.1.x/v1.0.x install; existing configuration, database, and users are preserved.
+
+---
+
 ## v1.1.0.0 — 25 August 2026
 
 Security and reliability hardening release, based on feedback from a security review of v1.0.0.0.

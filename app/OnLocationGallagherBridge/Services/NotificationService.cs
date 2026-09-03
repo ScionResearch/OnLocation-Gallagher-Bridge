@@ -84,9 +84,12 @@ public class NotificationService : INotificationService
             await TrySendAsync(group, state, ct);
         }
 
-        // Drain anything still pending due to rate limiting, highest priority first.
+        // Drain anything still pending due to rate limiting, highest priority first. Scheduled groups are
+        // excluded here - they are only sent once their interval elapses, handled by the loop above -
+        // otherwise this would send them immediately on every flush, defeating the schedule entirely.
         foreach (var group in cfg.Groups.OrderBy(g => g.Priority))
         {
+            if (group.Mode == "scheduled") continue;
             var state = _states.GetOrAdd(group.Name, _ => new GroupState());
             lock (state)
             {
@@ -201,9 +204,32 @@ public class NotificationService : INotificationService
             ""
         };
 
-        foreach (var evt in events.OrderBy(e => e.Timestamp))
+        // The same event (e.g. a record awaiting manual review) is often raised repeatedly across sync
+        // cycles until it is resolved. Consolidate identical type+details combinations into a single line
+        // with a first/last seen range and occurrence count, rather than repeating one line per attempt.
+        var consolidated = events
+            .GroupBy(e => (e.Type, e.Details))
+            .Select(g => new
+            {
+                g.Key.Type,
+                g.Key.Details,
+                First = g.Min(e => e.Timestamp),
+                Last = g.Max(e => e.Timestamp),
+                Count = g.Count()
+            })
+            .OrderBy(e => e.First);
+
+        foreach (var evt in consolidated)
         {
-            lines.Add($"- {evt.Timestamp:yyyy-MM-dd HH:mm:ss} UTC [{FormatEventType(evt.Type)}] {evt.Details}");
+            var typeLabel = FormatEventType(evt.Type);
+            if (evt.Count == 1)
+            {
+                lines.Add($"- {evt.First:yyyy-MM-dd HH:mm:ss} UTC [{typeLabel}] {evt.Details}");
+            }
+            else
+            {
+                lines.Add($"- {evt.First:yyyy-MM-dd HH:mm:ss} to {evt.Last:yyyy-MM-dd HH:mm:ss} UTC (x{evt.Count}) [{typeLabel}] {evt.Details}");
+            }
         }
 
         if (events.Count > 1)
