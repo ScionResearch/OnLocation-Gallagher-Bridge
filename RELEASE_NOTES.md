@@ -1,5 +1,32 @@
 # OnLocation-Gallagher Bridge Release Notes
 
+## v1.1.4.0 — 11 September 2026
+
+Change-detection fixes that stop unchanged records being rewritten to Command Centre on every sync.
+
+### Fixed
+
+- **Unchanged cardholders with a mapped competency are no longer rewritten on every full sync.** Any competency mapping was previously treated as a change, so each full sync issued a PATCH and left a cardholder history entry in Command Centre even when nothing had moved. Competency updates are now compared against what Command Centre already holds — an update only counts as a change if the linked competency's expiry (compared as an instant, so differing time-zone representations of the same moment are equal) or other fields actually differ. New competencies (`add`) are still always applied.
+- **The same unchanged OnLocation person no longer looks "modified" depending on which sync fetched them.** OnLocation returns a person's change history in `logs` when fetched by id but an empty array when listed, so full and fast syncs disagreed about whether a record had changed. The top-level `logs` array is now excluded from source payload comparison; all mapped fields (including nested induction data) are still compared.
+
+### Added
+
+- **Unit test project** (`app/OnLocationGallagherBridge.Tests`, xUnit) covering the competency and source-payload comparison logic. Run with `dotnet test app\OnLocationGallagherBridge.sln`.
+
+### Asset
+
+- `OnLocationGallagherBridge-v1.1.4.0.msi` — per-machine installer.
+
+### Install / Upgrade
+
+```powershell
+msiexec /i "OnLocationGallagherBridge-v1.1.4.0.msi" /qn /norestart
+```
+
+The installer performs an in-place upgrade over any existing v1.1.x/v1.0.x install; existing configuration, database, and users are preserved.
+
+---
+
 ## v1.1.3.0 — 3 September 2026
 
 Field mapping and notification reliability fixes.

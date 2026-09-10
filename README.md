@@ -500,6 +500,14 @@ dotnet run
 
 The web UI is available at the configured URL, e.g. `https://localhost:5000`.
 
+### Run the Unit Tests
+
+```powershell
+dotnet test "app\OnLocationGallagherBridge.sln"
+```
+
+The `OnLocationGallagherBridge.Tests` project (xUnit) covers the pure comparison logic used for change detection — competency PATCH comparison in `JobProcessor` and source payload comparison in `SyncProfileRunner`. No OnLocation or Gallagher connectivity is required.
+
 ---
 
 ## Installer Package
@@ -643,6 +651,10 @@ OnLocation-Gallagher-Bridge/
 │   ├── OnLocationGallagherBridge.Tray/   # System tray status widget
 │   │   ├── Program.cs
 │   │   └── OnLocationGallagherBridge.Tray.csproj
+│   ├── OnLocationGallagherBridge.Tests/  # xUnit unit tests (change-detection logic)
+│   │   ├── JobProcessorCompetencyTests.cs
+│   │   ├── SyncProfileRunnerPayloadTests.cs
+│   │   └── OnLocationGallagherBridge.Tests.csproj
 │   └── OnLocationGallagherBridge.Installer/  # WiX v4 MSI package
 │       ├── build-installer.ps1
 │       ├── Package.wxs
@@ -673,3 +685,4 @@ OnLocation-Gallagher-Bridge/
 | WiX Toolset v4 | MSI installer package |
 | System.ServiceProcess.ServiceController | Tray app service control |
 | Polly | HTTP resilience policies |
+| xUnit | Unit tests |

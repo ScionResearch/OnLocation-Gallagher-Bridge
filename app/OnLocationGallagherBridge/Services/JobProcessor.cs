@@ -359,7 +359,11 @@ public class JobProcessor : IJobProcessor
             foreach (var kvp in payload)
             {
                 if (string.Equals(kvp.Key, excludedField, StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(kvp.Key, "competencies", StringComparison.OrdinalIgnoreCase)) return false;
+                if (string.Equals(kvp.Key, "competencies", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!CompetenciesUnchanged(current.Value, kvp.Value)) return false;
+                    continue;
+                }
 
                 var currentValue = GetCardholderProperty(current.Value, kvp.Key);
                 if (!ValuesEqual(currentValue, kvp.Value)) return false;
@@ -389,6 +393,69 @@ public class JobProcessor : IJobProcessor
 
         if (cardholder.TryGetProperty(key, out var value)) return value;
         return null;
+    }
+
+    // The PATCH envelope is {"add":[...],"update":[{"href":..., "expiry":...}]}. Anything to add is a change by
+    // definition; an update is only a change if the linked competency's fields differ from what Command Centre
+    // already holds. Previously any competency mapping counted as a change, so every full sync rewrote the
+    // cardholder and left a history entry even when only the bridge message timestamp moved.
+    internal static bool CompetenciesUnchanged(JsonElement cardholder, object? desired)
+    {
+        var envelope = ToJsonElement(desired);
+        if (envelope.ValueKind != JsonValueKind.Object) return envelope.ValueKind == JsonValueKind.Null;
+
+        if (envelope.TryGetProperty("add", out var add) && add.ValueKind == JsonValueKind.Array && add.GetArrayLength() > 0)
+            return false;
+
+        if (!envelope.TryGetProperty("update", out var updates) || updates.ValueKind != JsonValueKind.Array) return true;
+
+        var existing = cardholder.ValueKind == JsonValueKind.Object
+            && cardholder.TryGetProperty("competencies", out var list)
+            && list.ValueKind == JsonValueKind.Array
+                ? list.EnumerateArray().ToList()
+                : new List<JsonElement>();
+
+        foreach (var update in updates.EnumerateArray())
+        {
+            if (update.ValueKind != JsonValueKind.Object) return false;
+            var href = update.TryGetProperty("href", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() : null;
+            if (string.IsNullOrEmpty(href)) return false;
+
+            var current = existing.FirstOrDefault(c =>
+                c.TryGetProperty("href", out var ch) && ch.ValueKind == JsonValueKind.String
+                && string.Equals(ch.GetString(), href, StringComparison.OrdinalIgnoreCase));
+            if (current.ValueKind != JsonValueKind.Object) return false;
+
+            foreach (var field in update.EnumerateObject())
+            {
+                if (field.Name.Equals("href", StringComparison.OrdinalIgnoreCase)) continue;
+                var currentValue = GetCardholderProperty(current, field.Name);
+
+                if (field.Name.Equals("expiry", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!DatesEqual(currentValue, field.Value)) return false;
+                    continue;
+                }
+
+                if (!ValuesEqual(currentValue, field.Value)) return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DatesEqual(JsonElement? current, JsonElement desired)
+    {
+        var currentText = current is { ValueKind: JsonValueKind.String } c ? c.GetString() : null;
+        var desiredText = desired.ValueKind == JsonValueKind.String ? desired.GetString() : null;
+        if (string.IsNullOrEmpty(currentText) && string.IsNullOrEmpty(desiredText)) return true;
+        if (string.IsNullOrEmpty(currentText) || string.IsNullOrEmpty(desiredText)) return false;
+
+        if (DateTimeOffset.TryParse(currentText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var a)
+            && DateTimeOffset.TryParse(desiredText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var b))
+            return a.UtcDateTime == b.UtcDateTime;
+
+        return string.Equals(currentText, desiredText, StringComparison.Ordinal);
     }
 
     private static bool ValuesEqual(JsonElement? current, object? desired)

@@ -180,7 +180,11 @@ public static class SyncProfileRunner
         return null;
     }
 
-    private static bool PayloadsEqual(string? a, string? b)
+    // OnLocation returns a person's change history in 'logs' when fetched by id but an empty array when listed,
+    // so the same unchanged person looked different depending on whether the full or fast sync fetched them.
+    private static readonly HashSet<string> IgnoredSourceFields = new(StringComparer.OrdinalIgnoreCase) { "logs" };
+
+    internal static bool PayloadsEqual(string? a, string? b)
     {
         if (string.Equals(a, b, StringComparison.Ordinal)) return true;
         if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
@@ -188,7 +192,7 @@ public static class SyncProfileRunner
         {
             using var docA = JsonDocument.Parse(a!);
             using var docB = JsonDocument.Parse(b!);
-            return JsonEquals(docA.RootElement, docB.RootElement);
+            return JsonEquals(docA.RootElement, docB.RootElement, IgnoredSourceFields);
         }
         catch
         {
@@ -196,7 +200,7 @@ public static class SyncProfileRunner
         }
     }
 
-    private static bool JsonEquals(JsonElement a, JsonElement b)
+    private static bool JsonEquals(JsonElement a, JsonElement b, HashSet<string>? ignoredTopLevel = null)
     {
         if (a.ValueKind != b.ValueKind) return false;
 
@@ -218,8 +222,8 @@ public static class SyncProfileRunner
                     if (!JsonEquals(aArray[i], bArray[i])) return false;
                 return true;
             case JsonValueKind.Object:
-                var aProps = a.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
-                var bProps = b.EnumerateObject().ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
+                var aProps = a.EnumerateObject().Where(p => ignoredTopLevel?.Contains(p.Name) != true).ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
+                var bProps = b.EnumerateObject().Where(p => ignoredTopLevel?.Contains(p.Name) != true).ToDictionary(p => p.Name, p => p.Value, StringComparer.OrdinalIgnoreCase);
                 if (aProps.Count != bProps.Count) return false;
                 foreach (var prop in aProps)
                 {
